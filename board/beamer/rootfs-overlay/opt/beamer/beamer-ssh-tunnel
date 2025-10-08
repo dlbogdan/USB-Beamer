@@ -9,6 +9,13 @@ PermitRootLogin prohibit-password
 PasswordAuthentication no
 ChallengeResponseAuthentication no
 
+# Allow tunneling but prevent terminal/shell access
+AllowTcpForwarding yes
+PermitTTY no
+X11Forwarding no
+AllowAgentForwarding no
+PermitOpen any
+ForceCommand /usr/bin/tail -f /dev/null
+
 UsePAM no
 PrintMotd no
-Subsystem sftp /usr/lib/openssh/sftp-server 

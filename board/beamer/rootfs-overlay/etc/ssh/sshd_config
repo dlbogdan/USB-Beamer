@@ -1,3 +1,6 @@
 PermitRootLogin yes
 AuthorizedKeysFile      .ssh/authorized_keys
 PasswordAuthentication yes
+
+# SFTP subsystem for file transfers
+Subsystem sftp /usr/libexec/sftp-server
