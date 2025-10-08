@@ -1,0 +1,77 @@
+#!/bin/sh
+#
+# Convert netplan configuration to interfaces format if needed
+#
+
+NETPLAN_CONFIG="/boot/network-config"
+TIMESTAMP_FILE="/boot/.network-config.timestamp"
+CONVERTER_SCRIPT="/usr/scripts/netplan_converter.py"
+
+# Source function library if it exists
+[ -r /etc/init.d/functions ] && . /etc/init.d/functions
+
+start() {
+    printf "Converting network configuration if needed: "
+        
+    # Check if converter script exists
+    if [ ! -f "$CONVERTER_SCRIPT" ]; then
+        echo "FAIL (converter not found)"
+        return 1
+    fi
+    
+    # Check if network config exists
+    if [ ! -f "$NETPLAN_CONFIG" ]; then
+        echo "SKIP (no config)"
+        return 0
+    fi
+    
+    # Get modification time using busybox date
+    config_mtime=$(date -r "$NETPLAN_CONFIG" +%s 2>/dev/null)
+    
+    # Get last conversion time
+    if [ ! -f "$TIMESTAMP_FILE" ] || ! last_converted=$(cat "$TIMESTAMP_FILE" 2>/dev/null); then
+        # Force conversion if timestamp missing or unreadable
+        last_converted=0
+    fi
+    
+    # Convert if no previous conversion or config is newer
+    if [ $last_converted -eq 0 ] || [ $config_mtime -gt $last_converted ]; then
+        if python3 "$CONVERTER_SCRIPT" "$NETPLAN_CONFIG" 2>/dev/null; then
+            echo "$config_mtime" > "$TIMESTAMP_FILE"
+            echo "OK"
+        else
+            echo "FAIL"
+            return 1
+        fi
+    else
+        echo "SKIP (not modified)"
+    fi
+    return 0
+}
+
+stop() {
+    # Nothing to do
+    return 0
+}
+
+restart() {
+    stop
+    start
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        restart
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?

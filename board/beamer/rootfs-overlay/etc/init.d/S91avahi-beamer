@@ -1,0 +1,99 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          avahi-beamer
+# Required-Start:    $remote_fs $network avahi-daemon
+# Required-Stop:     $remote_fs $network avahi-daemon
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Advertise Beamer USB/IP service over mDNS
+# Description:       Uses avahi-publish-service to publish _usbip._tcp on port 8007
+### END INIT INFO
+
+NAME=avahi-beamer
+DAEMON=/usr/bin/avahi-publish-service
+PIDFILE=/var/run/$NAME.pid
+DESC="Avahi publish beamer service"
+SERVICE_NAME="beamer-server"
+SERVICE_TYPE="_usbip._tcp"
+SERVICE_PORT=8007
+SERVICE_TEXT="USB Beamer Server"
+
+test -x $DAEMON || exit 0
+
+# Minimal helpers to avoid dependency on /lib/lsb/init-functions
+log_daemon_msg() {
+  echo "$1: $2"
+}
+
+log_end_msg() {
+  if [ "$1" -eq 0 ]; then
+    echo "OK"
+  else
+    echo "FAILED"
+  fi
+}
+
+log_failure_msg() {
+  echo "$@"
+}
+
+case "$1" in
+  start)
+    log_daemon_msg "Starting $DESC" "$NAME"
+    # Clean up stale pidfile if process not running
+    if [ -f "$PIDFILE" ]; then
+      oldpid=`cat "$PIDFILE" 2>/dev/null`
+      if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
+        log_failure_msg "$NAME already running (pid $oldpid)"
+        log_end_msg 0
+        exit 0
+      else
+        rm -f "$PIDFILE"
+      fi
+    fi
+    start-stop-daemon --start --quiet --pidfile $PIDFILE --make-pidfile --background --exec $DAEMON -- \
+      "$SERVICE_NAME" "$SERVICE_TYPE" "$SERVICE_PORT" "$SERVICE_TEXT"
+    status=$?
+    log_end_msg $status
+    ;;
+  stop)
+    log_daemon_msg "Stopping $DESC" "$NAME"
+    start-stop-daemon --stop --quiet --pidfile $PIDFILE --retry 5
+    status=$?
+    # Ensure stale pidfile is removed if process is no longer running
+    if [ -f "$PIDFILE" ]; then
+      pid=`cat "$PIDFILE" 2>/dev/null`
+      if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$PIDFILE"
+      fi
+    fi
+    log_end_msg $status
+    ;;
+  restart|force-reload)
+    $0 stop
+    $0 start
+    ;;
+  status)
+    if [ -f "$PIDFILE" ]; then
+      pid=`cat "$PIDFILE" 2>/dev/null`
+      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        echo "$NAME is running (pid $pid)"
+        exit 0
+      else
+        echo "$NAME is not running, but pidfile exists"
+        exit 1
+      fi
+    else
+      echo "$NAME is not running"
+      exit 3
+    fi
+    ;;
+  *)
+    echo "Usage: /etc/init.d/$NAME {start|stop|restart|force-reload|status}"
+    exit 1
+    ;;
+esac
+
+exit 0
+
+

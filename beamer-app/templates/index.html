@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>USB Beamer Server - Key Management</title>
+    <style>
+        body { font-family: sans-serif; margin: 2em; }
+        textarea { width: 100%; height: 100px; }
+        .key { font-family: monospace; word-break: break-all; margin-bottom: 1em; }
+        .usb-list { list-style-type: none; padding-left: 0; }
+        .usb-item { margin-bottom: 0.5em; }
+    </style>
+</head>
+<body>
+    <h1>USB Beamer Server</h1>
+    
+    <h2>Export USB Devices</h2>
+    <form action="/export" method="post">
+        <div class="usb-list">
+        {% for device in usb_devices %}
+            <div class="usb-item">
+                <label>
+                    <input type="checkbox" name="busids" value="{{ device.busid }}" {% if device.busid in exported_busids %}checked{% endif %}>
+                    {{ device.info }} ({{ device.busid }})
+                </label>
+            </div>
+        {% else %}
+            <p>No USB devices found or usbip command failed. Make sure the container has access to the host's USB devices.</p>
+        {% endfor %}
+        </div>
+        <br>
+        <button type="submit">Save Exported Devices</button>
+    </form>
+
+    <hr>
+
+    <h2>Client Key Management</h2>
+
+    <h3>Add New Client Key</h3>
+    <form action="/add" method="post">
+        <textarea name="key" placeholder="Paste the public key from the client addon here..."></textarea>
+        <br>
+        <button type="submit">Add Key</button>
+    </form>
+    
+    <h3>Authorized Keys</h3>
+    <div>
+        {% for key in keys %}
+            <div class="key">{{ key }}</div>
+        {% else %}
+            <p>No keys authorized yet.</p>
+        {% endfor %}
+    </div>
+</body>
+</html> 

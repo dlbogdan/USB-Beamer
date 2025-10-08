@@ -1,0 +1,8 @@
+# Enforce LF line endings for shell scripts and overlays
+*.sh text eol=lf
+board/rootfs-overlay/** text eol=lf
+board/usbip.config text eol=lf
+Dockerfile text eol=lf
+entrypoint.sh text eol=lf
+sshd_config text eol=lf
+

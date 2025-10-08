@@ -1,0 +1,77 @@
+#!/bin/sh
+#
+# Mount boot partition dynamically
+#
+
+BOOT_MOUNT="/boot"
+
+start() {
+    printf "Mounting boot partition: "
+    
+    # Get the root device from /proc/cmdline or /proc/mounts
+    ROOT_DEV=$(grep -o 'root=[^ ]*' /proc/cmdline | cut -d= -f2)
+    
+    # If root is /dev/mmcblk0p2, boot is likely /dev/mmcblk0p1
+    if echo "$ROOT_DEV" | grep -q "mmcblk"; then
+        BOOT_DEV=$(echo $ROOT_DEV | sed 's/p[0-9]*$/p1/')
+    elif echo "$ROOT_DEV" | grep -q "sd"; then
+        BOOT_DEV=$(echo $ROOT_DEV | sed 's/[0-9]*$/1/')
+    elif echo "$ROOT_DEV" | grep -q "nvme"; then
+        BOOT_DEV=$(echo $ROOT_DEV | sed 's/p[0-9]*$/p1/')
+    else
+        echo "FAIL (unknown root device)"
+        return 1
+    fi
+    
+    # Create mount point if it doesn't exist
+    mkdir -p $BOOT_MOUNT
+    
+    # Check if device exists
+    if [ ! -b "$BOOT_DEV" ]; then
+        echo "FAIL ($BOOT_DEV not found)"
+        return 1
+    fi
+    
+    # Mount the boot partition
+    if mount $BOOT_DEV $BOOT_MOUNT 2>/dev/null; then
+        echo "OK ($BOOT_DEV)"
+        return 0
+    else
+        echo "FAIL (mount error)"
+        return 1
+    fi
+}
+
+stop() {
+    printf "Unmounting boot partition: "
+    if umount $BOOT_MOUNT 2>/dev/null; then
+        echo "OK"
+        return 0
+    else
+        echo "FAIL"
+        return 1
+    fi
+}
+
+restart() {
+    stop
+    start
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        restart
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?
+
