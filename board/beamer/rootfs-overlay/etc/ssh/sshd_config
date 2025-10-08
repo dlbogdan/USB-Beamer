@@ -1,0 +1,3 @@
+PermitRootLogin yes
+AuthorizedKeysFile      .ssh/authorized_keys
+PasswordAuthentication yes
