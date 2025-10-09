@@ -29,15 +29,18 @@ arm_64bit=1
 # Aggressive underclocking for power saving
 # Default RPi 3 frequencies: ARM=1200MHz, GPU=400MHz, Core=400MHz, SDRAM=450MHz
 # Heavy underclock for minimal power consumption
-arm_freq=600
-gpu_freq=250
-core_freq=250
-sdram_freq=400
+#arm_freq=600
+#gpu_freq=250
+#core_freq=250
+#sdram_freq=400
 
 # Reduce voltage to save more power (can range from -16 to 8)
 # -2 is conservative, you can try -4 or lower if stable
-over_voltage=-2
+#over_voltage=-2
 
 # Optional: Force turbo mode off to save power (disables dynamic frequency scaling)
 # force_turbo=0
 
+# USB Power and Stability Settings
+max_usb_current=1               # Enable higher USB current (1.2A instead of 600mA)
+avoid_pwm_pll=1                 # Avoid PWM interference with USB

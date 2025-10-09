@@ -1,0 +1,2 @@
+root=/dev/mmcblk0p2 rootwait console=tty1 console=ttyAMA0,115200 dwc_otg.fiq_enable=0 dwc_otg.fiq_fsm_enable=0 dwc_otg.fiq_fsm_mask=0x0F dwc_otg.nak_holdoff=1 dwc_otg.speed=1 usbcore.usbfs_memory_mb=256
+
