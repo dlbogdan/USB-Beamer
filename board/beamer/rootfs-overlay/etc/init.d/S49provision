@@ -1,0 +1,67 @@
+#!/bin/sh
+
+### BEGIN INIT INFO
+# Provides:          beamer-provision
+# Required-Start:    $local_fs $network
+# Required-Stop:     $local_fs $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Bring up provisioning SoftAP when not provisioned
+### END INIT INFO
+
+APP_DIR=/opt/beamer
+APP_BIN="/usr/bin/python3 $APP_DIR/provision_app.py"
+APP_PORT=80
+PROVISION_MARKER=/data/provisioned
+DNSMASQ_PID=/var/run/dnsmasq-provision.pid
+
+start() {
+    [ -f "$PROVISION_MARKER" ] && echo "Provisioned; skipping AP" && return 0
+
+    echo "Starting provisioning AP..."
+    ip link set wlan0 up 2>/dev/null
+    ip addr flush dev wlan0
+    ip addr add 192.168.4.1/24 dev wlan0
+
+    # Start dnsmasq and hostapd
+    dnsmasq --conf-file=/etc/dnsmasq.conf --pid-file=$DNSMASQ_PID
+    hostapd -B /etc/hostapd/hostapd.conf
+
+    # Start Flask app on port 80 if not already running
+    if ! pgrep -f "$APP_BIN" >/dev/null 2>&1; then
+        echo "Starting portal app on port $APP_PORT..."
+        APP_PORT=$APP_PORT $APP_BIN &
+    fi
+}
+
+stop() {
+    echo "Stopping provisioning AP..."
+    killall hostapd 2>/dev/null
+    if [ -f "$DNSMASQ_PID" ]; then
+        kill "$(cat $DNSMASQ_PID)" 2>/dev/null
+        rm -f "$DNSMASQ_PID"
+    else
+        killall dnsmasq 2>/dev/null
+    fi
+}
+
+case "$1" in
+  start)
+    start
+    ;;
+  stop)
+    stop
+    ;;
+  restart)
+    stop
+    start
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac
+
+exit 0
+
+
