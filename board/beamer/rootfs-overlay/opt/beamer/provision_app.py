@@ -2,13 +2,19 @@ import os
 import subprocess
 import time
 from pathlib import Path
+
+import yaml
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 
 
-APP = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), "templates"))
+APP = Flask(
+    __name__,
+    template_folder=os.path.join(os.path.dirname(__file__), "templates"),
+)
 APP.secret_key = os.environ.get("FLASK_SECRET", "beamer-secret")
 
 DATA_DIR = "/data"
+BOOT_NETPLAN_PATH = "/boot/network-config"
 
 
 def write_wpa_supplicant_config(ssid: str, password: str) -> str:
@@ -27,6 +33,36 @@ def write_wpa_supplicant_config(ssid: str, password: str) -> str:
         f.write(content)
     os.chmod(conf_path, 0o600)
     return conf_path
+
+
+def write_boot_network_config(ssid: str, password: str) -> None:
+    """
+    Persist Wi‑Fi configuration to /boot/network-config in netplan format.
+
+    On the next boot, S30netplan_convert will see this file, run the
+    netplan_converter and generate /etc/network/interfaces + wpa config
+    so the device comes up on the configured Wi‑Fi automatically.
+    """
+    config = {
+        "network": {
+            "version": 2,
+            "wifis": {
+                "wlan0": {
+                    "dhcp4": True,
+                    "access-points": {
+                        ssid: {
+                            "password": password,
+                        }
+                    },
+                }
+            },
+        }
+    }
+    # Ensure /boot is present; S01mountboot should handle mounting at boot.
+    boot_dir = os.path.dirname(BOOT_NETPLAN_PATH)
+    os.makedirs(boot_dir, exist_ok=True)
+    with open(BOOT_NETPLAN_PATH, "w") as f:
+        yaml.safe_dump(config, f, default_flow_style=False)
 
 
 def bring_up_station(ssid: str, password: str, timeout_seconds: int = 25) -> bool:
@@ -52,6 +88,14 @@ def wifi():
             return redirect(url_for("wifi"))
         ok = bring_up_station(ssid, password)
         if ok:
+            # Persist configuration for future boots
+            try:
+                write_boot_network_config(ssid, password)
+            except Exception as exc:
+                # Do not treat this as a hard failure for the live connection,
+                # but surface it to the user so they know persistence failed.
+                flash(f"Connected, but failed to save config to /boot: {exc}", "error")
+
             os.makedirs(DATA_DIR, exist_ok=True)
             Path(os.path.join(DATA_DIR, "provisioned")).write_text("1")
             flash("Connected to Wi‑Fi successfully", "success")
