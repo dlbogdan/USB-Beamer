@@ -66,7 +66,15 @@ def wifi():
 @APP.route("/generate_204")
 @APP.route("/hotspot-detect.html")
 def captive_probe():
-    return ("OK", 200, {"Cache-Control": "no-cache"})
+    """
+    Handle connectivity checks from clients (Android, iOS, etc.).
+
+    Returning a bare \"OK\" with 200 makes the OS think there is full
+    internet connectivity and it will often hide the captive portal UI.
+    Instead, redirect to the Wi‑Fi configuration page so that the
+    automatic captive portal browser shows the setup form.
+    """
+    return redirect(url_for("wifi"))
 
 @APP.route("/")
 def root_redirect():

@@ -14,6 +14,8 @@ APP_BIN="/usr/bin/python3 $APP_DIR/provision_app.py"
 APP_PORT=80
 PROVISION_MARKER=/data/provisioned
 DNSMASQ_PID=/var/run/dnsmasq-provision.pid
+HOSTAPD_CONF_TEMPLATE=/etc/hostapd/hostapd.conf
+HOSTAPD_CONF_RUNTIME=/run/hostapd-provision.conf
 
 start() {
     [ -f "$PROVISION_MARKER" ] && echo "Provisioned; skipping AP" && return 0
@@ -23,9 +25,34 @@ start() {
     ip addr flush dev wlan0
     ip addr add 192.168.4.1/24 dev wlan0
 
+    # Prepare runtime hostapd config so we can expand placeholders like %H
+    mkdir -p "$(dirname "$HOSTAPD_CONF_RUNTIME")"
+    if [ -f "$HOSTAPD_CONF_TEMPLATE" ]; then
+        # Try to derive a short, unique suffix from the WLAN MAC address
+        SSID_SUFFIX=$(cat /sys/class/net/wlan0/address 2>/dev/null | tr -d ':' | tail -c 4)
+        # Fallback to hostname if MAC is unavailable for some reason
+        if [ -z "$SSID_SUFFIX" ]; then
+            SSID_SUFFIX=$(hostname 2>/dev/null || echo "beamer")
+        fi
+        # Replace %H in the template with the chosen suffix
+        sed "s/%H/$SSID_SUFFIX/g" "$HOSTAPD_CONF_TEMPLATE" > "$HOSTAPD_CONF_RUNTIME"
+    else
+        # As a last resort, use a minimal inline config
+        SSID_SUFFIX=$(hostname 2>/dev/null || echo "beamer")
+        cat >"$HOSTAPD_CONF_RUNTIME" <<EOF
+interface=wlan0
+driver=nl80211
+ssid=Beamer-$SSID_SUFFIX
+hw_mode=g
+channel=6
+wmm_enabled=1
+ignore_broadcast_ssid=0
+EOF
+    fi
+
     # Start dnsmasq and hostapd
     dnsmasq --conf-file=/etc/dnsmasq.conf --pid-file=$DNSMASQ_PID
-    hostapd -B /etc/hostapd/hostapd.conf
+    hostapd -B "$HOSTAPD_CONF_RUNTIME"
 
     # Start Flask app on port 80 if not already running
     if ! pgrep -f "$APP_BIN" >/dev/null 2>&1; then
