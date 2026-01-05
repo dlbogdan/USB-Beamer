@@ -2,7 +2,7 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 
 
 APP = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), "templates"))
@@ -80,6 +80,64 @@ def captive_probe():
 def root_redirect():
     # Any HTTP request to the root gets the Wi‑Fi form
     return redirect(url_for("wifi"))
+
+
+@APP.route("/api/wifi-scan")
+def api_wifi_scan():
+    """
+    Simple JSON API to scan for nearby Wi‑Fi networks on wlan0.
+    Returns: {"ok": bool, "networks": [{"ssid": str, "signal": float | null}, ...], "error": str | null}
+    """
+    try:
+        # Use iw to scan – available on most embedded Linux builds.
+        # If this fails in your environment, the error will be surfaced to the UI.
+        proc = subprocess.run(
+            ["iw", "dev", "wlan0", "scan"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return jsonify(
+                {
+                    "ok": False,
+                    "networks": [],
+                    "error": proc.stderr.strip() or "Wi‑Fi scan failed",
+                }
+            )
+
+        networks = []
+        current = {"ssid": None, "signal": None}
+        for line in proc.stdout.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("BSS "):
+                # New network block – flush previous one if it has data
+                if current.get("ssid") is not None or current.get("signal") is not None:
+                    networks.append(current)
+                current = {"ssid": None, "signal": None}
+            elif stripped.startswith("SSID:"):
+                current["ssid"] = stripped.split("SSID:", 1)[1].strip()
+            elif stripped.startswith("signal:"):
+                # Example: "signal: -46.00 dBm"
+                parts = stripped.split()
+                try:
+                    current["signal"] = float(parts[1])
+                except (ValueError, IndexError):
+                    current["signal"] = None
+
+        # Append last parsed network
+        if current.get("ssid") is not None or current.get("signal") is not None:
+            networks.append(current)
+
+        return jsonify({"ok": True, "networks": networks, "error": None})
+    except Exception as exc:  # pragma: no cover - defensive
+        return jsonify(
+            {
+                "ok": False,
+                "networks": [],
+                "error": f"Exception during scan: {exc}",
+            }
+        )
 
 
 if __name__ == "__main__":
