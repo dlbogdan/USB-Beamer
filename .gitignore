@@ -3,7 +3,7 @@ buildroot/output/
 buildroot/dl/
 buildroot/.config
 buildroot/.config.old
-
+sdcard.tar.gz
 # Local development symlinks (create these yourself)
 /scripts/
 
