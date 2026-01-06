@@ -18,11 +18,19 @@ BOOT_NETPLAN_PATH = "/boot/network-config"
 
 
 def write_wpa_supplicant_config(ssid: str, password: str) -> str:
+    """
+    Write a minimal wpa_supplicant config that is compatible with the
+    BusyBox wpa_supplicant shipped in this image.
+
+    Note: Including a "ctrl_interface=..." global line caused:
+      "unknown global field 'ctrl_interface=/var/run/wpa_supplicant'"
+    on this target, so we intentionally omit it and only write the
+    network block.
+    """
     conf_dir = "/etc/wpa_supplicant"
     os.makedirs(conf_dir, exist_ok=True)
     conf_path = os.path.join(conf_dir, "wpa_supplicant-wlan0.conf")
     content = (
-        "ctrl_interface=/var/run/wpa_supplicant\n"
         "update_config=1\n\n"
         "network={\n"
         f"    ssid=\"{ssid}\"\n"
