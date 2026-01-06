@@ -12,6 +12,7 @@ start() {
     ROOT_DEV=$(grep -o 'root=[^ ]*' /proc/cmdline | cut -d= -f2)
     
     # If root is /dev/mmcblk0p2, boot is likely /dev/mmcblk0p1
+    # making this generic so it will work with newer raspberries or even PCs
     if echo "$ROOT_DEV" | grep -q "mmcblk"; then
         BOOT_DEV=$(echo $ROOT_DEV | sed 's/p[0-9]*$/p1/')
     elif echo "$ROOT_DEV" | grep -q "sd"; then
