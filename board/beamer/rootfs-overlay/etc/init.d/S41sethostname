@@ -1,0 +1,16 @@
+#!/bin/sh
+# init script to setup the hostname as beamer-<last 4 digits of the MAC address>>
+
+# Get the last 4 digits of the MAC address
+MAC_ADDRESS=$(cat /sys/class/net/wlan0/address | sed 's/://g' | tail -c 6)
+
+# Set the hostname
+hostname "Beamer-$MAC_ADDRESS"
+
+# Update /etc/hosts to map the hostname to the IP address
+#if not already present
+if ! grep -q "127.0.1.1" /etc/hosts; then
+    echo "127.0.1.1 Beamer-$MAC_ADDRESS" >> /etc/hosts
+    echo "Beamer-$MAC_ADDRESS" > /etc/hostname
+fi
+
