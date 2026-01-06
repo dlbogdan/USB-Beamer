@@ -1,15 +1,62 @@
 #!/bin/sh
 #
-# ProFTPD disabled
+# ProFTPD startup script for development mode
 #
+# Starts the FTP server only if /boot/devmode exists.
+# Intended for development so that the whole root filesystem (/) can be
+# accessed and modified over FTP.
+
+DAEMON="/usr/sbin/proftpd"
+PIDFILE="/var/run/proftpd.pid"
+CONF="/etc/proftpd.conf"
+DEVMODE_FLAG="/boot/devmode"
+
+# If proftpd is not installed, silently do nothing
+[ -x "$DAEMON" ] || exit 0
+
+start() {
+    if [ ! -f "$DEVMODE_FLAG" ]; then
+        echo "proftpd: /boot/devmode not present, not starting (normal in production)."
+        return 0
+    fi
+
+    echo "Starting proftpd (devmode)..."
+    # Use config file if it exists, otherwise run with defaults
+    if [ -f "$CONF" ]; then
+        "$DAEMON" -c "$CONF"
+    else
+        "$DAEMON"
+    fi
+}
+
+stop() {
+    echo "Stopping proftpd..."
+    if [ -f "$PIDFILE" ]; then
+        kill "$(cat "$PIDFILE")" 2>/dev/null || true
+        rm -f "$PIDFILE"
+    else
+        # Fallback if PIDFILE is not used
+        killall proftpd 2>/dev/null || true
+    fi
+}
 
 case "$1" in
-  start|stop|restart|reload)
-    # Do nothing
-    echo "ProFTPD is disabled. Delete this file from overlay to enable it."
-    exit 0
+  start)
+    start
+    ;;
+  stop)
+    stop
+    ;;
+  restart|reload)
+    stop
+    start
     ;;
   *)
     echo "Usage: $0 {start|stop|restart|reload}"
     exit 1
+    ;;
 esac
+
+exit 0
+
+
