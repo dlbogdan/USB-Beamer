@@ -13,7 +13,6 @@ APP = Flask(
 )
 APP.secret_key = os.environ.get("FLASK_SECRET", "beamer-secret")
 
-DATA_DIR = "/data"
 BOOT_NETPLAN_PATH = "/boot/network-config"
 
 
@@ -104,8 +103,6 @@ def wifi():
                 # but surface it to the user so they know persistence failed.
                 flash(f"Connected, but failed to save config to /boot: {exc}", "error")
 
-            os.makedirs(DATA_DIR, exist_ok=True)
-            Path(os.path.join(DATA_DIR, "provisioned")).write_text("1")
             flash("Connected to Wi‑Fi successfully", "success")
             return redirect(url_for("wifi"))
         else:
