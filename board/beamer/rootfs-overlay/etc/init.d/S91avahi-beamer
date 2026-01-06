@@ -13,7 +13,11 @@ NAME=avahi-beamer
 DAEMON=/usr/bin/avahi-publish-service
 PIDFILE=/var/run/$NAME.pid
 DESC="Avahi publish beamer service"
-SERVICE_NAME="beamer-server"
+
+# Use the hostname as the per-device service instance name so that
+# multiple boards can be distinguished in service browsers.
+HOSTNAME=$(hostname 2>/dev/null || echo "beamer")
+SERVICE_NAME="$HOSTNAME"
 SERVICE_TYPE="_usbip._tcp"
 SERVICE_PORT=8007
 SERVICE_TEXT="USB Beamer Server"

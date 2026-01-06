@@ -1,5 +1,5 @@
 #!/bin/sh
-# init script to setup the hostname as beamer-<last 4 digits of the MAC address>>
+# init script to setup the hostname as beamer-<last 6 digits of the MAC address>>
 
 # Get the last 4 digits of the MAC address
 MAC_ADDRESS=$(cat /sys/class/net/wlan0/address | sed 's/://g' | tail -c 6)
