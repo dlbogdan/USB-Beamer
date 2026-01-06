@@ -14,14 +14,14 @@ DEVMODE_FLAG="/boot/devmode"
 umask 077
 
 start() {
+        # Create any missing keys, as we need these for the ssh tunnel to work, not only for development mode.
+        /usr/bin/ssh-keygen -A
+
         # Only start SSH daemon in development mode
         if [ ! -f "$DEVMODE_FLAG" ]; then
                 echo "sshd: $DEVMODE_FLAG not present, not starting (normal in production)."
                 return 0
         fi
-
-        # Create any missing keys
-        /usr/bin/ssh-keygen -A
 
         printf "Starting %s: " "$DAEMON"
         start-stop-daemon --start --pidfile "$PIDFILE" \
