@@ -1,0 +1,64 @@
+#!/bin/sh
+#
+# Common helpers for Beamer init scripts.
+# Provides unified logging to console and syslog.
+#
+
+# Determine log tag: prefer LOG_TAG, otherwise derive from script name.
+beamer_log_tag() {
+  if [ -n "$LOG_TAG" ]; then
+    echo "$LOG_TAG"
+  else
+    # strip leading path and any rc prefix
+    basename "$0"
+  fi
+}
+
+beamer_log() {
+  level="$1"
+  shift
+  tag="$(beamer_log_tag)"
+
+  # Always echo to console
+  echo "$@"
+
+  # And send to syslog (ignore errors if logger/syslogd not present)
+  logger -t "$tag" -p "daemon.$level" "$@" 2>/dev/null || true
+}
+
+log_info() {
+  beamer_log info "$@"
+}
+
+log_warn() {
+  beamer_log warn "$@"
+}
+
+log_err() {
+  beamer_log err "$@"
+}
+
+log_debug() {
+  beamer_log debug "$@"
+}
+
+# LSB-style helpers used by some scripts
+log_daemon_msg() {
+  # Usage: log_daemon_msg "Action" "Name"
+  log_info "$1: $2"
+}
+
+log_end_msg() {
+  # Usage: log_end_msg status_code
+  if [ "$1" -eq 0 ]; then
+    log_info "OK"
+  else
+    log_err "FAILED"
+  fi
+}
+
+log_failure_msg() {
+  log_err "$@"
+}
+
+

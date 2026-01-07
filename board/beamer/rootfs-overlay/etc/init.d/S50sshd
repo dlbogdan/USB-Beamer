@@ -7,6 +7,10 @@
 DAEMON="sshd"
 PIDFILE="/var/run/$DAEMON.pid"
 DEVMODE_FLAG="/boot/devmode"
+LOG_TAG="S50sshd"
+
+# Common Beamer init helpers
+[ -r /etc/init.d/common-func ] && . /etc/init.d/common-func
 
 # Make sure the ssh-keygen program exists
 [ -f /usr/bin/ssh-keygen ] || exit 0
@@ -19,31 +23,33 @@ start() {
 
         # Only start SSH daemon in development mode
         if [ ! -f "$DEVMODE_FLAG" ]; then
-                echo "sshd: $DEVMODE_FLAG not present, not starting (normal in production)."
+                log_info "sshd: $DEVMODE_FLAG not present, not starting (normal in production)."
                 return 0
         fi
 
         printf "Starting %s: " "$DAEMON"
+        log_info "Starting $DAEMON"
         start-stop-daemon --start --pidfile "$PIDFILE" \
                 --exec "/usr/sbin/$DAEMON"
         status=$?
         if [ "$status" -eq 0 ]; then
-                echo "OK"
+                log_info "OK - $DAEMON started (pid file $PIDFILE)"
         else
-                echo "FAIL"
+                log_err "FAIL - could not start $DAEMON"
         fi
         return "$status"
 }
 
 stop() {
         printf "Stopping %s: " "$DAEMON"
+        log_info "Stopping $DAEMON"
         start-stop-daemon --stop --pidfile "$PIDFILE" \
                 --exec "/usr/sbin/$DAEMON"
         status=$?
         if [ "$status" -eq 0 ]; then
-                echo "OK"
+                log_info "OK - $DAEMON stopped"
         else
-                echo "FAIL"
+                log_err "FAIL - could not stop $DAEMON"
         fi
         # sshd deletes its PID file on exit, wait for it to be gone
         while [ -f "$PIDFILE" ]; do

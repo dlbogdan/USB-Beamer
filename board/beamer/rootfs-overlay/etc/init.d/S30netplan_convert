@@ -5,31 +5,36 @@
 
 NETPLAN_CONFIG="/boot/network-config"
 CONVERTER_SCRIPT="/usr/scripts/netplan_converter.py"
+LOG_TAG="S30netplan_convert"
+
+# Common Beamer init helpers
+[ -r /etc/init.d/common-func ] && . /etc/init.d/common-func
 
 # Source function library if it exists
 [ -r /etc/init.d/functions ] && . /etc/init.d/functions
 
 start() {
     printf "Converting network configuration: "
+    log_info "Converting network configuration from $NETPLAN_CONFIG"
 
     # Check if converter script exists
     if [ ! -f "$CONVERTER_SCRIPT" ]; then
-        echo "FAIL (converter not found)"
+        log_err "FAIL (converter not found: $CONVERTER_SCRIPT)"
         return 1
     fi
 
     # Check if network config exists
     if [ ! -f "$NETPLAN_CONFIG" ]; then
-        echo "SKIP (no config)"
+        log_info "SKIP (no config at $NETPLAN_CONFIG)"
         return 0
     fi
 
     # Always convert from /boot/network-config so that this file is the
     # single source of truth for networking on each boot.
     if python3 "$CONVERTER_SCRIPT" "$NETPLAN_CONFIG" 2>/dev/null; then
-        echo "OK"
+        log_info "OK - converted network config from $NETPLAN_CONFIG"
     else
-        echo "FAIL"
+        log_err "FAIL - could not convert network config from $NETPLAN_CONFIG"
         return 1
     fi
 

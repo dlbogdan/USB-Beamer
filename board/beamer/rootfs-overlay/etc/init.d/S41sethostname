@@ -2,6 +2,11 @@
 # Init script to set hostname as Beamer-<last 6 digits of the WLAN MAC>
 # and keep /etc/hostname + /etc/hosts in sync, but avoid unnecessary writes.
 
+LOG_TAG="S41sethostname"
+
+# Common Beamer init helpers
+[ -r /etc/init.d/common-func ] && . /etc/init.d/common-func
+
 # Get the last 6 hex digits of the MAC address
 MAC_ADDRESS=$(cat /sys/class/net/wlan0/address 2>/dev/null | sed 's/://g' | tail -c 6)
 DESIRED_HOSTNAME="Beamer-$MAC_ADDRESS"
@@ -9,27 +14,35 @@ DESIRED_HOSTNAME="Beamer-$MAC_ADDRESS"
 # Fallback if MAC is not readable for some reason
 if [ -z "$MAC_ADDRESS" ]; then
     DESIRED_HOSTNAME="Beamer-unknown"
+    log_warn "Could not read MAC for wlan0; using fallback hostname $DESIRED_HOSTNAME"
+else
+    log_info "Setting hostname based on WLAN MAC: $DESIRED_HOSTNAME"
 fi
 
 # Update runtime hostname if needed
 CURRENT_HOSTNAME=$(hostname)
 if [ "$CURRENT_HOSTNAME" != "$DESIRED_HOSTNAME" ]; then
     hostname "$DESIRED_HOSTNAME"
+    log_info "Updated runtime hostname from $CURRENT_HOSTNAME to $DESIRED_HOSTNAME"
 fi
 
 # Ensure /etc/hostname matches, but only write if different
 if [ ! -f /etc/hostname ] || ! grep -qx "$DESIRED_HOSTNAME" /etc/hostname 2>/dev/null; then
     echo "$DESIRED_HOSTNAME" > /etc/hostname
+    log_info "Wrote hostname '$DESIRED_HOSTNAME' to /etc/hostname"
 fi
 
 # Ensure /etc/hosts has localhost line (idempotent)
 if ! grep -q "^127\.0\.0\.1[[:space:]]\+localhost" /etc/hosts 2>/dev/null; then
     echo "127.0.0.1 localhost" >> /etc/hosts
+    log_info "Added localhost entry to /etc/hosts"
 fi
 
 # Ensure 127.0.1.1 line for this hostname; replace existing or append
 if grep -q "^127\.0\.1\.1" /etc/hosts 2>/dev/null; then
     sed -i "s/^127\.0\.1\.1.*/127.0.1.1 $DESIRED_HOSTNAME/" /etc/hosts
+    log_info "Updated 127.0.1.1 entry in /etc/hosts to $DESIRED_HOSTNAME"
 else
     echo "127.0.1.1 $DESIRED_HOSTNAME" >> /etc/hosts
+    log_info "Added 127.0.1.1 entry for $DESIRED_HOSTNAME to /etc/hosts"
 fi

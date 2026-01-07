@@ -13,6 +13,7 @@ NAME=avahi-beamer
 DAEMON=/usr/bin/avahi-publish-service
 PIDFILE=/var/run/$NAME.pid
 DESC="Avahi publish beamer service"
+LOG_TAG="S91avahi-beamer"
 
 # Use the hostname as the per-device service instance name so that
 # multiple boards can be distinguished in service browsers.
@@ -24,22 +25,8 @@ SERVICE_TEXT="USB Beamer Server"
 
 test -x $DAEMON || exit 0
 
-# Minimal helpers to avoid dependency on /lib/lsb/init-functions
-log_daemon_msg() {
-  echo "$1: $2"
-}
-
-log_end_msg() {
-  if [ "$1" -eq 0 ]; then
-    echo "OK"
-  else
-    echo "FAILED"
-  fi
-}
-
-log_failure_msg() {
-  echo "$@"
-}
+# Common Beamer init helpers (provides log_daemon_msg/log_end_msg/log_failure_msg)
+[ -r /etc/init.d/common-func ] && . /etc/init.d/common-func
 
 case "$1" in
   start)

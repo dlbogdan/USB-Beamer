@@ -4,9 +4,14 @@
 #
 
 BOOT_MOUNT="/boot"
+LOG_TAG="S01mountboot"
+
+# Common Beamer init helpers
+[ -r /etc/init.d/common-func ] && . /etc/init.d/common-func
 
 start() {
     printf "Mounting boot partition: "
+    log_info "Mounting boot partition"
     
     # Get the root device from /proc/cmdline or /proc/mounts
     ROOT_DEV=$(grep -o 'root=[^ ]*' /proc/cmdline | cut -d= -f2)
@@ -20,7 +25,7 @@ start() {
     elif echo "$ROOT_DEV" | grep -q "nvme"; then
         BOOT_DEV=$(echo $ROOT_DEV | sed 's/p[0-9]*$/p1/')
     else
-        echo "FAIL (unknown root device)"
+        log_err "FAIL (unknown root device: $ROOT_DEV)"
         return 1
     fi
     
@@ -29,16 +34,16 @@ start() {
     
     # Check if device exists
     if [ ! -b "$BOOT_DEV" ]; then
-        echo "FAIL ($BOOT_DEV not found)"
+        log_err "FAIL ($BOOT_DEV not found)"
         return 1
     fi
     
     # Mount the boot partition
     if mount $BOOT_DEV $BOOT_MOUNT 2>/dev/null; then
-        echo "OK ($BOOT_DEV)"
+        log_info "OK ($BOOT_DEV) - mounted on $BOOT_MOUNT"
         return 0
     else
-        echo "FAIL (mount error)"
+        log_err "FAIL (mount error for $BOOT_DEV on $BOOT_MOUNT)"
         return 1
     fi
 }
@@ -46,10 +51,10 @@ start() {
 stop() {
     printf "Unmounting boot partition: "
     if umount $BOOT_MOUNT 2>/dev/null; then
-        echo "OK"
+        log_info "OK - unmounted $BOOT_MOUNT"
         return 0
     else
-        echo "FAIL"
+        log_err "FAIL - could not unmount $BOOT_MOUNT"
         return 1
     fi
 }
