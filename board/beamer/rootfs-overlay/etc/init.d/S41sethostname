@@ -7,14 +7,26 @@ LOG_TAG="S41sethostname"
 # Common Beamer init helpers
 [ -r /etc/init.d/common-func ] && . /etc/init.d/common-func
 
-# Get the last 6 hex digits of the MAC address
-MAC_ADDRESS=$(cat /sys/class/net/wlan0/address 2>/dev/null | sed 's/://g' | tail -c 6)
+# Get the last 6 hex digits of the MAC address.
+# On some boots wlan0 may not be ready yet when this script runs, so wait
+# briefly for /sys/class/net/wlan0/address to appear before falling back.
+WIFI_IFACE="wlan0"
+WAIT_SECS=5
+MAC_ADDRESS=""
+while [ "$WAIT_SECS" -gt 0 ]; do
+    if [ -r "/sys/class/net/$WIFI_IFACE/address" ]; then
+        MAC_ADDRESS=$(cat "/sys/class/net/$WIFI_IFACE/address" 2>/dev/null | sed 's/://g' | tail -c 6)
+        break
+    fi
+    sleep 1
+    WAIT_SECS=$((WAIT_SECS - 1))
+done
 DESIRED_HOSTNAME="Beamer-$MAC_ADDRESS"
 
 # Fallback if MAC is not readable for some reason
 if [ -z "$MAC_ADDRESS" ]; then
     DESIRED_HOSTNAME="Beamer-unknown"
-    log_warn "Could not read MAC for wlan0; using fallback hostname $DESIRED_HOSTNAME"
+    log_warn "Could not read MAC for $WIFI_IFACE; using fallback hostname $DESIRED_HOSTNAME"
 else
     log_info "Setting hostname based on WLAN MAC: $DESIRED_HOSTNAME"
 fi
