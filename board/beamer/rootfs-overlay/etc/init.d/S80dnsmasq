@@ -1,0 +1,43 @@
+#!/bin/sh
+#
+# Stub dnsmasq init script for Beamer.
+# We manage dnsmasq explicitly from S49provision (provisioning AP only),
+# so this script intentionally does nothing at boot.
+#
+
+### BEGIN INIT INFO
+# Provides:          dnsmasq
+# Required-Start:    $local_fs $network
+# Required-Stop:     $local_fs $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: (disabled) dnsmasq is controlled by S49provision
+### END INIT INFO
+
+LOG_TAG="S80dnsmasq"
+
+# Common Beamer init helpers (optional)
+[ -r /etc/init.d/common-func ] && . /etc/init.d/common-func
+
+case "$1" in
+  start)
+    log_info "Skipping dnsmasq start; managed by S49provision"
+    ;;
+  stop)
+    log_info "Skipping dnsmasq stop; managed by S49provision"
+    ;;
+  restart|reload|force-reload)
+    log_info "Skipping dnsmasq restart; managed by S49provision"
+    ;;
+  status)
+    echo "dnsmasq is managed by S49provision; this init script is a stub"
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart|reload|force-reload|status}"
+    exit 1
+    ;;
+esac
+
+exit 0
+
+
