@@ -45,6 +45,18 @@ start() {
         fi
 
         log_warn "Starting provisioning AP on wlan0 (no IPv4 after timeout)..."
+
+        # Ensure we are not fighting with any client Wi‑Fi processes (e.g. wpa_supplicant/dhclient)
+        # that might try to reconfigure wlan0 back into station mode.
+        if pgrep -x wpa_supplicant >/dev/null 2>&1; then
+            log_info "Stopping wpa_supplicant for provisioning AP..."
+            killall wpa_supplicant 2>/dev/null || true
+        fi
+        if pgrep -x dhclient >/dev/null 2>&1; then
+            log_info "Stopping dhclient for provisioning AP..."
+            killall dhclient 2>/dev/null || true
+        fi
+
         ip link set wlan0 up 2>/dev/null
         ip addr flush dev wlan0
         ip addr add 192.168.4.1/24 dev wlan0
