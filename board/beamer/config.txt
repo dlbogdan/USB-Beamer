@@ -21,7 +21,9 @@ gpu_mem_512=32
 gpu_mem_1024=32
 
 # Enable UART0 for serial console on ttyAMA0
-dtoverlay=miniuart-bt
+#dtoverlay=miniuart-bt
+# disable bluetooth
+dtoverlay=disable-bt
 
 # enable 64bits support
 arm_64bit=1
@@ -44,3 +46,33 @@ arm_64bit=1
 # USB Power and Stability Settings
 max_usb_current=1               # Enable higher USB current (1.2A instead of 600mA)
 avoid_pwm_pll=1                 # Avoid PWM interference with USB
+
+# disable HDMI (saves power)
+dtoverlay=vc4-kms-v3d,nohdmi
+max_framebuffers=1
+disable_fw_kms_setup=1
+disable_overscan=1
+
+# disable composite video output
+enable_tvout=0
+
+#dtparam=act_led_trigger=none  ## we'll see later if we can repurpose this led 
+#dtparam=act_led_activelow=on
+
+## don't try to read HDMI eeprom
+
+hdmi_blanking=2
+hdmi_ignore_edid=0xa5000080
+hdmi_ignore_cec_init=1
+hdmi_ignore_cec=1
+
+# all these options cause a wait for an I2C bus response, we don't need any of them, so let's disable them.
+force_eeprom_read=0
+disable_poe_fan=1
+ignore_lcd=1
+disable_touchscreen=1
+disable_fw_kms_setup=1
+
+# no autodetection for anything (will wait for I2C answers)
+camera_auto_detect=0
+display_auto_detect=0
