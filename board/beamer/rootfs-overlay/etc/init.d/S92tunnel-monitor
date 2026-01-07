@@ -1,0 +1,83 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          zeroforce-monitor
+# Required-Start:    $remote_fs $network beamer-sshd
+# Required-Stop:     $remote_fs $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Monitor SSH tunnel activity for Zeroforce pairing
+# Description:       Runs a small daemon that updates /run/zeroforce/tunnel_active
+### END INIT INFO
+
+NAME=zeroforce-monitor
+DAEMON=/bin/sh
+SCRIPT=/opt/beamer/zeroforce_tunnel_monitor.sh
+PIDFILE=/var/run/$NAME.pid
+DESC="Zeroforce tunnel activity monitor"
+LOG_TAG="S92zeroforce-monitor"
+
+test -x $DAEMON || exit 0
+test -r $SCRIPT || exit 0
+
+# Common Beamer init helpers (provides log_daemon_msg/log_end_msg/log_failure_msg)
+[ -r /etc/init.d/common-func ] && . /etc/init.d/common-func
+
+case "$1" in
+  start)
+    log_daemon_msg "Starting $DESC" "$NAME"
+    # Clean up stale pidfile if process not running
+    if [ -f "$PIDFILE" ]; then
+      oldpid=`cat "$PIDFILE" 2>/dev/null`
+      if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
+        log_failure_msg "$NAME already running (pid $oldpid)"
+        log_end_msg 0
+        exit 0
+      else
+        rm -f "$PIDFILE"
+      fi
+    fi
+    start-stop-daemon --start --quiet --pidfile $PIDFILE --make-pidfile --background --exec $DAEMON -- "$SCRIPT"
+    status=$?
+    log_end_msg $status
+    ;;
+  stop)
+    log_daemon_msg "Stopping $DESC" "$NAME"
+    start-stop-daemon --stop --quiet --pidfile $PIDFILE --retry 5
+    status=$?
+    # Ensure stale pidfile is removed if process is no longer running
+    if [ -f "$PIDFILE" ]; then
+      pid=`cat "$PIDFILE" 2>/dev/null`
+      if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        rm -f "$PIDFILE"
+      fi
+    fi
+    log_end_msg $status
+    ;;
+  restart|force-reload)
+    $0 stop
+    $0 start
+    ;;
+  status)
+    if [ -f "$PIDFILE" ]; then
+      pid=`cat "$PIDFILE" 2>/dev/null`
+      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        echo "$NAME is running (pid $pid)"
+        exit 0
+      else
+        echo "$NAME is not running, but pidfile exists"
+        exit 1
+      fi
+    else
+      echo "$NAME is not running"
+      exit 3
+    fi
+    ;;
+  *)
+    echo "Usage: /etc/init.d/$NAME {start|stop|restart|force-reload|status}"
+    exit 1
+    ;;
+esac
+
+exit 0
+
+
