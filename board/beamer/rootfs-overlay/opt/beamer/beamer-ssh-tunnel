@@ -14,7 +14,8 @@ AllowTcpForwarding yes
 PermitTTY no
 X11Forwarding no
 AllowAgentForwarding no
-PermitOpen any
+# Restrict TCP forwarding to usbipd (3240) and the local USB API (6000)
+PermitOpen localhost:3240 localhost:6000
 ForceCommand /usr/bin/tail -f /dev/null
 
 UsePAM no
