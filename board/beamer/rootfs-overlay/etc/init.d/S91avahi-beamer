@@ -6,7 +6,7 @@
 # Default-Start:     2 3 4 5
 # Default-Stop:      0 1 6
 # Short-Description: Advertise Beamer USB/IP service over mDNS
-# Description:       Uses avahi-publish-service to publish _usbip._tcp on port 8007
+# Description:       Uses avahi-publish-service to publish _beamerzf._tcp on port 8007
 ### END INIT INFO
 
 NAME=avahi-beamer
@@ -19,9 +19,9 @@ LOG_TAG="S91avahi-beamer"
 # multiple boards can be distinguished in service browsers.
 HOSTNAME=$(hostname 2>/dev/null || echo "beamer")
 SERVICE_NAME="$HOSTNAME"
-SERVICE_TYPE="_usbip._tcp"
+SERVICE_TYPE="_beamerzf._tcp"
 SERVICE_PORT=8007
-SERVICE_TEXT="USB Beamer Server"
+SERVICE_TEXT="Beamer ZeroForce Server"
 
 test -x $DAEMON || exit 0
 

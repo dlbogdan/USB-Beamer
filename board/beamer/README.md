@@ -125,7 +125,7 @@ its HTTP port (`APP_PORT`, default 5000).
 
 1. The add‑on generates or loads its SSH key pair to use for the tunnel.
 2. It discovers the Beamer device on the LAN (for example via the
-   `_usbip._tcp` mDNS service published by `S91avahi-beamer`) or via a
+   `_beamerzf._tcp` mDNS service published by `S91avahi-beamer`) or via a
    configured IP/hostname.
 3. It calls `GET /zeroforce/readytopair`:
    - If the response is `false`, the add‑on waits and retries later.

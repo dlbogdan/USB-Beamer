@@ -2,12 +2,47 @@ import os
 import pwd
 import subprocess
 import json
+import logging
+from logging.handlers import SysLogHandler
 from typing import List, Dict, Any
 
 from flask import Flask, request, jsonify
 
 
 app = Flask(__name__)
+
+
+def _setup_syslog_logging(application: Flask, tag: str) -> None:
+    """
+    Configure logging so that messages are sent to the system syslog daemon,
+    which typically writes to /var/log/messages on the Beamer device.
+    """
+    root_logger = logging.getLogger()
+
+    # Avoid adding multiple syslog handlers if this function is called twice.
+    for handler in root_logger.handlers:
+        if isinstance(handler, SysLogHandler):
+            break
+    else:
+        try:
+            syslog_handler = SysLogHandler(address="/dev/log")
+        except OSError:
+            # If /dev/log is not available, fall back to default stderr logging.
+            application.logger.warning(
+                "Syslog socket /dev/log not available; using default logging only"
+            )
+        else:
+            formatter = logging.Formatter(f"{tag}: %(levelname)s: %(message)s")
+            syslog_handler.setFormatter(formatter)
+            syslog_handler.setLevel(logging.INFO)
+            root_logger.addHandler(syslog_handler)
+            root_logger.setLevel(logging.INFO)
+
+    # Ensure Flask's app logger is at least INFO.
+    application.logger.setLevel(logging.INFO)
+
+
+_setup_syslog_logging(app, "zeroforce-usb")
 
 
 AUTHORIZED_KEYS_FILE = "/root/.ssh/authorized_keys"
@@ -216,7 +251,7 @@ def build_lsusb_payload() -> List[Dict[str, Any]]:
 
 
 def resolve_target_busids(
-    ids: List[int] | None, pidvids: List[Dict[str, str]] | None
+    ids: List[int] | None, vidpids: List[Dict[str, str]] | None
 ) -> set[str]:
     """
     Resolve a list of abstract IDs and/or PID/VID pairs to concrete busids.
@@ -236,7 +271,7 @@ def resolve_target_busids(
             if busid:
                 target_busids.add(busid)
 
-    if pidvids:
+    if vidpids:
         # Build a map vid:pid -> list of busids.
         vp_to_busids: Dict[tuple[str, str], List[str]] = {}
         for dev in devices:
@@ -248,7 +283,7 @@ def resolve_target_busids(
             key = (vid, pid)
             vp_to_busids.setdefault(key, []).append(busid)
 
-        for entry in pidvids:
+        for entry in vidpids:
             vid = str(entry.get("vid", "")).upper()
             pid = str(entry.get("pid", "")).upper()
             key = (vid, pid)
@@ -325,7 +360,7 @@ def zeroforce_bind():
     Input (JSON):
       {
         "ids": [1, 2, 3],                  # optional
-        "pidvids": [                       # optional
+        "vidpids": [                       # optional
           {"vid": "1234", "pid": "5678"},
           ...
         ]
@@ -344,27 +379,27 @@ def zeroforce_bind():
 
     payload = request.get_json(silent=True) or {}
     raw_ids = payload.get("ids") or []
-    raw_pidvids = payload.get("pidvids") or []
+    raw_vidpids = payload.get("vidpids") or []
 
     try:
         ids = [int(x) for x in raw_ids]
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "Invalid 'ids' list"}), 400
 
-    if not isinstance(raw_pidvids, list):
-        return jsonify({"ok": False, "error": "Invalid 'pidvids' list"}), 400
+    if not isinstance(raw_vidpids, list):
+        return jsonify({"ok": False, "error": "Invalid 'vidpids' list"}), 400
 
-    pidvids: List[Dict[str, str]] = []
-    for entry in raw_pidvids:
+    vidpids: List[Dict[str, str]] = []
+    for entry in raw_vidpids:
         if not isinstance(entry, dict):
             continue
         vid = entry.get("vid")
         pid = entry.get("pid")
         if not vid or not pid:
             continue
-        pidvids.append({"vid": str(vid), "pid": str(pid)})
+        vidpids.append({"vid": str(vid), "pid": str(pid)})
 
-    target_busids = resolve_target_busids(ids, pidvids)
+    target_busids = resolve_target_busids(ids, vidpids)
     if not target_busids:
         return jsonify({"ok": False, "error": "No matching devices for selection"}), 400
 

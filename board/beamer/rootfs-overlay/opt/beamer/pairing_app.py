@@ -1,9 +1,44 @@
 import os
 import pwd
+import logging
+from logging.handlers import SysLogHandler
 from flask import Flask, request
 
 
 app = Flask(__name__)
+
+
+def _setup_syslog_logging(application: Flask, tag: str) -> None:
+    """
+    Configure logging so that messages are sent to the system syslog daemon,
+    which typically writes to /var/log/messages on the Beamer device.
+    """
+    root_logger = logging.getLogger()
+
+    # Avoid adding multiple syslog handlers if this function is called twice.
+    for handler in root_logger.handlers:
+        if isinstance(handler, SysLogHandler):
+            break
+    else:
+        try:
+            syslog_handler = SysLogHandler(address="/dev/log")
+        except OSError:
+            # If /dev/log is not available, fall back to default stderr logging.
+            application.logger.warning(
+                "Syslog socket /dev/log not available; using default logging only"
+            )
+        else:
+            formatter = logging.Formatter(f"{tag}: %(levelname)s: %(message)s")
+            syslog_handler.setFormatter(formatter)
+            syslog_handler.setLevel(logging.INFO)
+            root_logger.addHandler(syslog_handler)
+            root_logger.setLevel(logging.INFO)
+
+    # Ensure Flask's app logger is at least INFO.
+    application.logger.setLevel(logging.INFO)
+
+
+_setup_syslog_logging(app, "zeroforce-pairing")
 
 
 # --- SSH / pairing configuration ------------------------------------------------

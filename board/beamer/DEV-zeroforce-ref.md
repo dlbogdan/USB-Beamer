@@ -154,7 +154,7 @@ This section documents the intended contract with the Home Assistant add-on.
 ### Expected Home Assistant add-on flow
 
 1. Generate or load the SSH key pair used to connect to the tunnel.
-2. Discover the Beamer device on the LAN (e.g. via `_usbip._tcp` mDNS) or via
+2. Discover the Beamer device on the LAN (e.g. via `_beamerzf._tcp` mDNS) or via
    configured IP/hostname.
 3. Periodically call `GET /zeroforce/readytopair`:
    - If body is `false`, wait and retry later.
