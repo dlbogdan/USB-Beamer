@@ -242,6 +242,7 @@ def build_lsusb_payload() -> List[Dict[str, Any]]:
           "VID": str,
           "device_name": str,
           "binded": bool,
+          "busid": str,
         },
         ...
       ]
@@ -259,6 +260,7 @@ def build_lsusb_payload() -> List[Dict[str, Any]]:
                 "VID": dev.get("vid", ""),
                 "device_name": dev.get("device_name", "Unknown Device"),
                 "binded": dev.get("busid") in bound_busids,
+                "busid": dev.get("busid", ""),
             }
         )
         next_id += 1
@@ -420,7 +422,7 @@ def zeroforce_bind():
         return jsonify({"ok": False, "error": "No matching devices for selection"}), 400
 
     apply_bind_configuration(target_busids)
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "busids": sorted(target_busids)})
 
 
 if __name__ == "__main__":
