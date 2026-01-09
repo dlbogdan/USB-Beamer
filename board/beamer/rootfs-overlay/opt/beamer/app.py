@@ -44,12 +44,15 @@ def _setup_syslog_logging(application: Flask, tag: str) -> None:
 
     # Attach the syslog handler to the Flask app logger as well so app.logger.info
     # messages (like setkey updates) make it to syslog even when propagate=False.
-    if syslog_handler and not any(
-        isinstance(h, SysLogHandler) for h in application.logger.handlers
-    ):
-        application.logger.addHandler(syslog_handler)
+    # When propagating to root, we don't need the app to hold its own syslog
+    # handler (would cause duplicates). Drop any existing SysLogHandler on it.
+    if syslog_handler:
+        application.logger.handlers = [
+            h for h in application.logger.handlers if not isinstance(h, SysLogHandler)
+        ]
 
     application.logger.setLevel(logging.INFO)
+    application.logger.propagate = True
 
 
 _setup_syslog_logging(app, "zeroforce-usb")
