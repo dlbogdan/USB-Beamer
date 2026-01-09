@@ -204,34 +204,6 @@ def parse_usbip_list() -> List[Dict[str, Any]]:
     return devices
 
 
-def get_bound_busids() -> set[str]:
-    """
-    Return the set of busids currently exported by usbip.
-    Uses `usbip port` output.
-    """
-    try:
-        result = subprocess.run(
-            ["usbip", "port"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except FileNotFoundError:
-        return set()
-
-    bound: set[str] = set()
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        # Typical line: "busid 1-1 (xxxx:yyyy)"
-        parts = line.split()
-        if len(parts) >= 2 and parts[0] == "busid":
-            bound.add(parts[1])
-
-    return bound
-
-
 def build_lsusb_payload() -> List[Dict[str, Any]]:
     """
     Build the payload for /zeroforce/lsusb:
@@ -241,14 +213,12 @@ def build_lsusb_payload() -> List[Dict[str, Any]]:
           "PID": str,
           "VID": str,
           "device_name": str,
-          "binded": bool,
           "busid": str,
         },
         ...
       ]
     """
     devices = parse_usbip_list()
-    bound_busids = get_bound_busids()
 
     payload: List[Dict[str, Any]] = []
     next_id = 1
@@ -259,7 +229,6 @@ def build_lsusb_payload() -> List[Dict[str, Any]]:
                 "PID": dev.get("pid", ""),
                 "VID": dev.get("vid", ""),
                 "device_name": dev.get("device_name", "Unknown Device"),
-                "binded": dev.get("busid") in bound_busids,
                 "busid": dev.get("busid", ""),
             }
         )
@@ -313,24 +282,10 @@ def resolve_target_busids(
 
 def apply_bind_configuration(target_busids: set[str]) -> None:
     """
-    Apply the desired binding configuration:
-      - Unbind any currently bound busids that are not in target_busids.
-      - For each target busid, force a re-bind (unbind then bind).
+    Apply the desired binding configuration by forcing a re-bind of each
+    requested busid. We no longer attempt to track/export "current" binding
+    state on the server.
     """
-    current_bound = get_bound_busids()
-
-    # Unbind devices no longer desired.
-    for busid in current_bound - target_busids:
-        try:
-            subprocess.run(
-                ["usbip", "unbind", "-b", busid],
-                check=False,
-                capture_output=True,
-            )
-            app.logger.info("Unbound %s (no longer selected)", busid)
-        except Exception as exc:
-            app.logger.error("Error unbinding %s: %s", busid, exc)
-
     # For each desired device, force a re-bind.
     for busid in target_busids:
         # 1. Unbind first to clear stale state; ignore failures.

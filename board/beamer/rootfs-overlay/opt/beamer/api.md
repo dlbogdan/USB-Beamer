@@ -17,7 +17,6 @@ the full object specification in the list of devices contains:
     - PID
     - VID
     - device_name [string]
-    - binded [bool]
 
 api endpoints: 
 
