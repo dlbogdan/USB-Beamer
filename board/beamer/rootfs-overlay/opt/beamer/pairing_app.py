@@ -15,11 +15,15 @@ def _setup_syslog_logging(application: Flask, tag: str) -> None:
     """
     root_logger = logging.getLogger()
 
+    syslog_handler: SysLogHandler | None = None
+
     # Avoid adding multiple syslog handlers if this function is called twice.
     for handler in root_logger.handlers:
         if isinstance(handler, SysLogHandler):
+            syslog_handler = handler
             break
-    else:
+
+    if syslog_handler is None:
         try:
             syslog_handler = SysLogHandler(address="/dev/log")
         except OSError:
@@ -34,11 +38,20 @@ def _setup_syslog_logging(application: Flask, tag: str) -> None:
             root_logger.addHandler(syslog_handler)
             root_logger.setLevel(logging.INFO)
 
-    # Ensure Flask's app logger is at least INFO.
+    # Attach the syslog handler to the Flask app logger as well so app.logger.info
+    # messages reach syslog even when propagate=False.
+    if syslog_handler and not any(
+        isinstance(h, SysLogHandler) for h in application.logger.handlers
+    ):
+        application.logger.addHandler(syslog_handler)
+
     application.logger.setLevel(logging.INFO)
 
 
 _setup_syslog_logging(app, "zeroforce-pairing")
+
+# Silence noisy werkzeug development-server logs (startup, debugger, etc.).
+# logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 
 # --- SSH / pairing configuration ------------------------------------------------
@@ -211,6 +224,7 @@ if __name__ == "__main__":
     set_proper_permissions()
     port = int(os.environ.get("PAIRING_APP_PORT", 5000))
     # Pairing app is exposed on all interfaces.
-    app.run(host="0.0.0.0", port=port, debug=True)
+    from waitress import serve
+    serve(app, host="0.0.0.0", port=port, threads=1)
 
 

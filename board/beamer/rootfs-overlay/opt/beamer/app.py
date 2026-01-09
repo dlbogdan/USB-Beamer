@@ -19,11 +19,15 @@ def _setup_syslog_logging(application: Flask, tag: str) -> None:
     """
     root_logger = logging.getLogger()
 
+    syslog_handler: SysLogHandler | None = None
+
     # Avoid adding multiple syslog handlers if this function is called twice.
     for handler in root_logger.handlers:
         if isinstance(handler, SysLogHandler):
+            syslog_handler = handler
             break
-    else:
+
+    if syslog_handler is None:
         try:
             syslog_handler = SysLogHandler(address="/dev/log")
         except OSError:
@@ -38,11 +42,20 @@ def _setup_syslog_logging(application: Flask, tag: str) -> None:
             root_logger.addHandler(syslog_handler)
             root_logger.setLevel(logging.INFO)
 
-    # Ensure Flask's app logger is at least INFO.
+    # Attach the syslog handler to the Flask app logger as well so app.logger.info
+    # messages (like setkey updates) make it to syslog even when propagate=False.
+    if syslog_handler and not any(
+        isinstance(h, SysLogHandler) for h in application.logger.handlers
+    ):
+        application.logger.addHandler(syslog_handler)
+
     application.logger.setLevel(logging.INFO)
 
 
 _setup_syslog_logging(app, "zeroforce-usb")
+
+# Silence noisy werkzeug development-server logs (startup, debugger, etc.).
+# logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
 
 AUTHORIZED_KEYS_FILE = "/root/.ssh/authorized_keys"
@@ -411,6 +424,7 @@ if __name__ == "__main__":
     # USB API should only listen on localhost; it is expected to be reached
     # via the SSH tunnel (local port forwarding).
     port = int(os.environ.get("USB_APP_PORT", 6000))
-    app.run(host="127.0.0.1", port=port, debug=True)
+    from waitress import serve
+    serve(app, host="127.0.0.1", port=port, threads=1)
 
 
