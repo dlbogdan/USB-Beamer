@@ -204,6 +204,39 @@ def parse_usbip_list() -> List[Dict[str, Any]]:
     return devices
 
 
+def get_bound_busids() -> set[str]:
+    """
+    Return the set of busids currently exported by usbip-host.
+    Uses the usbip-listbounded.sh helper for a reliable source.
+    """
+    script_path = os.path.join(os.path.dirname(__file__), "usbip-listbounded.sh")
+    try:
+        result = subprocess.run(
+            [script_path],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError:
+        app.logger.error("Bound-list script missing: %s", script_path)
+        return set()
+    except subprocess.CalledProcessError as exc:
+        app.logger.error(
+            "Bound-list script failed: %s", exc.stderr.strip() or str(exc)
+        )
+        return set()
+
+    bound: set[str] = set()
+    for raw in result.stdout.splitlines():
+        busid = raw.strip()
+        if not busid:
+            continue
+        if all(ch.isalnum() or ch in ".-" for ch in busid):
+            bound.add(busid)
+
+    return bound
+
+
 def build_lsusb_payload() -> List[Dict[str, Any]]:
     """
     Build the payload for /zeroforce/lsusb:
@@ -233,6 +266,47 @@ def build_lsusb_payload() -> List[Dict[str, Any]]:
             }
         )
         next_id += 1
+
+    return payload
+
+
+def build_lsbounded_payload() -> List[Dict[str, Any]]:
+    """
+    Build the payload for /zeroforce/ls-bounded:
+      [
+        {
+          "id": int | None,  # abstracted index from lsusb listing, if known
+          "PID": str,
+          "VID": str,
+          "busid": str,
+        },
+        ...
+      ]
+    """
+    devices = parse_usbip_list()
+    bound_busids = sorted(get_bound_busids())
+
+    # Map busid -> id (1-based) and busid -> device info from the lsusb view.
+    busid_to_id: Dict[str, int] = {}
+    busid_to_dev: Dict[str, Dict[str, Any]] = {}
+    for idx, dev in enumerate(devices, start=1):
+        busid = dev.get("busid", "")
+        if not busid:
+            continue
+        busid_to_id[busid] = idx
+        busid_to_dev[busid] = dev
+
+    payload: List[Dict[str, Any]] = []
+    for busid in bound_busids:
+        dev = busid_to_dev.get(busid, {})
+        payload.append(
+            {
+                "id": busid_to_id.get(busid),
+                "PID": dev.get("pid", ""),
+                "VID": dev.get("vid", ""),
+                "busid": busid,
+            }
+        )
 
     return payload
 
@@ -322,6 +396,18 @@ def zeroforce_lsusb():
         return jsonify({"ok": False, "error": "Not available in pairing mode"}), 403
 
     payload = build_lsusb_payload()
+    return jsonify(payload)
+
+
+@app.route("/zeroforce/ls-bounded", methods=["GET"])
+def zeroforce_ls_bounded():
+    """
+    List currently exported (bound) USB devices with their abstracted indices.
+    """
+    if is_in_pairing_mode():
+        return jsonify({"ok": False, "error": "Not available in pairing mode"}), 403
+
+    payload = build_lsbounded_payload()
     return jsonify(payload)
 
 

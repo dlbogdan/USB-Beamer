@@ -18,6 +18,12 @@ the full object specification in the list of devices contains:
     - VID
     - device_name [string]
 
+there is also a bounded-only list endpoint (see below) that returns:
+    - id [int|null]  # same abstracted index as in /zeroforce/lsusb when known
+    - PID
+    - VID
+    - busid
+
 api endpoints: 
 
 available anytime (either in pairing mode or not):
@@ -32,6 +38,9 @@ available only if pairing mode is true:
 available only for connected client, while pairing mode is false, so through the tunnel itself (maybe just bind these to localhost only? might be a solution)
 /zeroforce/lsusb -> list-of-objects
     lists the devices as described above
+/zeroforce/ls-bounded -> list-of-objects
+    lists only the currently exported/bound devices with their abstracted ids,
+    PID/VID, and busid
 /zeroforce/bind (list-of-ids or list-of-pidvids) 
     instructs server to export these usb devices and then the client can connect to them using usbip
 
