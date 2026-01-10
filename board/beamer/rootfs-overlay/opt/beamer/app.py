@@ -57,9 +57,6 @@ def _setup_syslog_logging(application: Flask, tag: str) -> None:
 
 _setup_syslog_logging(app, "zeroforce-usb")
 
-# Silence noisy werkzeug development-server logs (startup, debugger, etc.).
-# logging.getLogger("werkzeug").setLevel(logging.ERROR)
-
 
 AUTHORIZED_KEYS_FILE = "/root/.ssh/authorized_keys"
 TUNNEL_USER = "root"
@@ -237,83 +234,15 @@ def get_bound_busids() -> set[str]:
     return bound
 
 
-def build_lsusb_payload() -> List[Dict[str, Any]]:
-    """
-    Build the payload for /zeroforce/lsusb:
-      [
-        {
-          "id": int,
-          "PID": str,
-          "VID": str,
-          "device_name": str,
-          "busid": str,
-        },
-        ...
-      ]
-    """
-    devices = parse_usbip_list()
-
-    payload: List[Dict[str, Any]] = []
-    next_id = 1
-    for dev in devices:
-        payload.append(
-            {
-                "id": next_id,
-                "PID": dev.get("pid", ""),
-                "VID": dev.get("vid", ""),
-                "device_name": dev.get("device_name", "Unknown Device"),
-                "busid": dev.get("busid", ""),
-            }
-        )
-        next_id += 1
-
-    return payload
-
 
 def build_lsbounded_payload() -> List[Dict[str, Any]]:
     """
-    Build the payload for /zeroforce/ls-bounded:
-      [
-        {
-          "id": int | None,  # abstracted index from lsusb listing, if known
-          "PID": str,
-          "VID": str,
-          "busid": str,
-        },
-        ...
-      ]
+    ##TODO
     """
-    devices = parse_usbip_list()
-    bound_busids = sorted(get_bound_busids())
+    return []
+    
 
-    # Map busid -> id (1-based) and busid -> device info from the lsusb view.
-    busid_to_id: Dict[str, int] = {}
-    busid_to_dev: Dict[str, Dict[str, Any]] = {}
-    for idx, dev in enumerate(devices, start=1):
-        busid = dev.get("busid", "")
-        if not busid:
-            continue
-        busid_to_id[busid] = idx
-        busid_to_dev[busid] = dev
-
-    payload: List[Dict[str, Any]] = []
-    for busid in bound_busids:
-        dev = busid_to_dev.get(busid, {})
-        payload.append(
-            {
-                "id": busid_to_id.get(busid),
-                "PID": dev.get("pid", ""),
-                "VID": dev.get("vid", ""),
-                "busid": busid,
-            }
-        )
-
-    return payload
-
-
-def resolve_target_busids(
-    ids: List[int] | None, vidpids: List[Dict[str, str]] | None
-) -> set[str]:
+def resolve_target_busids(vidpids: List[Dict[str, str]]) -> set[str] | None:
     """
     Resolve a list of abstract IDs and/or PID/VID pairs to concrete busids.
     """
@@ -325,12 +254,6 @@ def resolve_target_busids(
         id_to_busid[idx] = dev.get("busid", "")
 
     target_busids: set[str] = set()
-
-    if ids:
-        for i in ids:
-            busid = id_to_busid.get(int(i))
-            if busid:
-                target_busids.add(busid)
 
     if vidpids:
         # Build a map vid:pid -> list of busids.
@@ -350,25 +273,17 @@ def resolve_target_busids(
             key = (vid, pid)
             for busid in vp_to_busids.get(key, []):
                 target_busids.add(busid)
-
+    else:
+        return None
     return target_busids
 
 
 def apply_bind_configuration(target_busids: set[str]) -> None:
     """
-    Apply the desired binding configuration by forcing a re-bind of each
-    requested busid. We no longer attempt to track/export "current" binding
-    state on the server.
+    Attempt to bind the given busids via usbip.
     """
     # For each desired device, force a re-bind.
     for busid in target_busids:
-        # 1. Unbind first to clear stale state; ignore failures.
-        subprocess.run(
-            ["usbip", "unbind", "-b", busid],
-            check=False,
-            capture_output=True,
-        )
-        # 2. Bind the device; log any error.
         try:
             subprocess.run(
                 ["usbip", "bind", "-b", busid],
@@ -395,7 +310,34 @@ def zeroforce_lsusb():
     if is_in_pairing_mode():
         return jsonify({"ok": False, "error": "Not available in pairing mode"}), 403
 
-    payload = build_lsusb_payload()
+    """Build the payload for /zeroforce/lsusb:
+      [
+        {
+          "id": int,
+          "PID": str,
+          "VID": str,
+          "device_name": str,
+          "busid": str,
+        },
+        ...
+      ]
+    """
+    devices = parse_usbip_list()
+
+    payload: List[Dict[str, Any]] = []
+    next_id = 1
+    for dev in devices:
+        payload.append(
+            {
+                "id": next_id,
+                "PID": dev.get("pid", ""),
+                "VID": dev.get("vid", ""),
+                "device_name": dev.get("device_name", "Unknown Device"),
+                "busid": dev.get("busid", ""),
+            }
+        )
+        next_id += 1
+    
     return jsonify(payload)
 
 
@@ -418,8 +360,7 @@ def zeroforce_bind():
 
     Input (JSON):
       {
-        "ids": [1, 2, 3],                  # optional
-        "vidpids": [                       # optional
+        "vidpids": [   
           {"vid": "1234", "pid": "5678"},
           ...
         ]
@@ -437,13 +378,7 @@ def zeroforce_bind():
         return jsonify({"ok": False, "error": "Expected JSON body"}), 400
 
     payload = request.get_json(silent=True) or {}
-    raw_ids = payload.get("ids") or []
     raw_vidpids = payload.get("vidpids") or []
-
-    try:
-        ids = [int(x) for x in raw_ids]
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "Invalid 'ids' list"}), 400
 
     if not isinstance(raw_vidpids, list):
         return jsonify({"ok": False, "error": "Invalid 'vidpids' list"}), 400
@@ -458,7 +393,7 @@ def zeroforce_bind():
             continue
         vidpids.append({"vid": str(vid), "pid": str(pid)})
 
-    target_busids = resolve_target_busids(ids, vidpids)
+    target_busids = resolve_target_busids(vidpids)
     if not target_busids:
         return jsonify({"ok": False, "error": "No matching devices for selection"}), 400
 
