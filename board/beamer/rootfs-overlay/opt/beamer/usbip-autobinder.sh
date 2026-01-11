@@ -1,27 +1,23 @@
 #!/bin/sh
 
-# This scripts auto binds all devices returned from lsusb-nohubs.sh that are not yet bounded with usbip
-# it is run as a service that runs every 10 seconds to check for new devices and bind them if needed
+# Auto-bind all plugged devices that are not yet bound with usbip.
+# Runs in a loop via a service, checking every 10 seconds.
 
-# loop forever
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 while true; do
+  devices="$("$SCRIPT_DIR/list-plugged.sh")"
+  bounded="$("$SCRIPT_DIR/usbip-listbounded.sh")"
 
-# get the list of devices from lsusb-nohubs.sh
-devices=$(./lsusb-nohubs.sh)
-#format is for example 1-1.4,0658:0200
-# get the list of bounded devices from usbip-listbounded.sh
-bounded=$(./usbip-listbounded.sh)
-
-# compare the two lists and bind the devices that are not bounded
-for device in $devices; do   #format is for example 1-1.4,0658:0200
-    busid=$(echo "$device" | cut -d ',' -f 1)
+  # devices format example: 1-1.4,0658:0200
+  for device in $devices; do
+    busid=$(echo "$device" | cut -d',' -f1)
+    [ -n "$busid" ] || continue
     # bounded list only contains busids, so compare on busid alone
     if ! printf '%s\n' "$bounded" | grep -q "^$busid$"; then
-        usbip bind -b "$busid"
+      usbip bind -b "$busid"
     fi
-done
+  done
 
-# sleep for 10 seconds
-sleep 10
-
+  sleep 10
 done

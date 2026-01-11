@@ -41,8 +41,9 @@ available only for connected client, while pairing mode is false, so through the
 /zeroforce/ls-bounded -> list-of-objects
     lists only the currently exported/bound devices with their abstracted ids,
     PID/VID, and busid
-/zeroforce/bind (list-of-ids or list-of-pidvids) 
-    instructs server to export these usb devices and then the client can connect to them using usbip
+/zeroforce/bind (deprecated)
+    Binding is handled automatically by the usbip-autobinder service.
+    This endpoint now returns HTTP 410 to signal that manual binding is no longer needed.
 
 i want the app to be stateless, so for example if rebooted, the client will re-request the binding after requesting the usb list.
 i also want to have guardrails so if a device is plugged out and into another usb port, it will be reexported and then rebinded succesfully. 
