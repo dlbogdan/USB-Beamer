@@ -1,25 +1,25 @@
+import json
+import logging
 import os
 import pwd
-import logging
 from logging.handlers import SysLogHandler
-from flask import Flask, request
+
+import anyio
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
 
 from pairing_utils import AUTHORIZED_KEYS_FILE, TUNNEL_USER, is_in_pairing_mode
 
 
-app = Flask(__name__)
-
-
-def _setup_syslog_logging(application: Flask, tag: str) -> None:
+def _setup_syslog_logging(tag: str) -> logging.Logger:
     """
-    Configure logging so that messages are sent to the system syslog daemon,
-    which typically writes to /var/log/messages on the Beamer device.
+    Configure logging so that messages are sent to syslog when available.
+    Returns a logger tagged for this app.
     """
     root_logger = logging.getLogger()
-
     syslog_handler: SysLogHandler | None = None
 
-    # Avoid adding multiple syslog handlers if this function is called twice.
     for handler in root_logger.handlers:
         if isinstance(handler, SysLogHandler):
             syslog_handler = handler
@@ -29,8 +29,7 @@ def _setup_syslog_logging(application: Flask, tag: str) -> None:
         try:
             syslog_handler = SysLogHandler(address="/dev/log")
         except OSError:
-            # If /dev/log is not available, fall back to default stderr logging.
-            application.logger.warning(
+            logging.getLogger(tag).warning(
                 "Syslog socket /dev/log not available; using default logging only"
             )
         else:
@@ -40,24 +39,14 @@ def _setup_syslog_logging(application: Flask, tag: str) -> None:
             root_logger.addHandler(syslog_handler)
             root_logger.setLevel(logging.INFO)
 
-    # Attach the syslog handler to the Flask app logger as well so app.logger.info
-    # messages reach syslog even when propagate=False.
-    # When propagating to root, we don't need the app to hold its own syslog
-    # handler (would cause duplicates). Drop any existing SysLogHandler on it.
-    if syslog_handler:
-        application.logger.handlers = [
-            h for h in application.logger.handlers if not isinstance(h, SysLogHandler)
-        ]
-
-    application.logger.setLevel(logging.INFO)
-    application.logger.propagate = True
+    logger = logging.getLogger(tag)
+    logger.setLevel(logging.INFO)
+    logger.propagate = True
+    return logger
 
 
-_setup_syslog_logging(app, "zeroforce-pairing")
-
-# Silence noisy werkzeug development-server logs (startup, debugger, etc.).
-# logging.getLogger("werkzeug").setLevel(logging.ERROR)
-
+logger = _setup_syslog_logging("zeroforce-pairing")
+app = Starlette(debug=False)
 
 # --- SSH / pairing configuration ------------------------------------------------
 
@@ -86,22 +75,29 @@ def set_proper_permissions() -> None:
         os.chown(AUTHORIZED_KEYS_FILE, root_uid, root_gid)
         os.chmod(AUTHORIZED_KEYS_FILE, 0o600)
     except Exception as exc:
-        app.logger.error("Failed to set SSH permissions: %s", exc)
+        logger.error("Failed to set SSH permissions: %s", exc)
+
+
+def _write_key(key: str) -> None:
+    with open(AUTHORIZED_KEYS_FILE, "w") as f:
+        f.write(key + "\n")
+    set_proper_permissions()
+    logger.info("Updated authorized_keys via /zeroforce/setkey")
 
 
 @app.route("/zeroforce/readytopair", methods=["GET"])
-def zeroforce_ready_to_pair():
+async def zeroforce_ready_to_pair(request: Request) -> PlainTextResponse:
     """
     Returns "true" or "false" (lower-case) depending on whether pairing mode
     is currently active.
     """
     ready = is_in_pairing_mode()
     body = "true" if ready else "false"
-    return app.response_class(body, mimetype="text/plain")
+    return PlainTextResponse(body)
 
 
 @app.route("/zeroforce/setkey", methods=["POST"])
-def zeroforce_set_key():
+async def zeroforce_set_key(request: Request) -> PlainTextResponse:
     """
     Replace the SSH public key allowed to connect to the tunnel.
 
@@ -110,28 +106,29 @@ def zeroforce_set_key():
     - Replaces the content of AUTHORIZED_KEYS_FILE with this single key.
     """
     if not is_in_pairing_mode():
-        return app.response_class("NOK", mimetype="text/plain"), 403
+        return PlainTextResponse("NOK", status_code=403)
 
     key = ""
-    if request.form:
-        key = request.form.get("key", "").strip()
-    if not key and request.is_json:
-        payload = request.get_json(silent=True) or {}
-        key = str(payload.get("key", "")).strip()
+    form = await request.form()
+    if form:
+        key = str(form.get("key", "")).strip()
+    if not key:
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError:
+            payload = {}
+        key = str(payload.get("key", "")).strip() if isinstance(payload, dict) else ""
 
     if not key or not (key.startswith("ssh-rsa") or key.startswith("ssh-ed25519")):
-        return app.response_class("NOK", mimetype="text/plain"), 400
+        return PlainTextResponse("NOK", status_code=400)
 
     try:
-        with open(AUTHORIZED_KEYS_FILE, "w") as f:
-            f.write(key + "\n")
-        set_proper_permissions()
-        app.logger.info("Updated authorized_keys via /zeroforce/setkey")
+        await anyio.to_thread.run_sync(_write_key, key)
     except Exception as exc:
-        app.logger.error("Failed to write %s: %s", AUTHORIZED_KEYS_FILE, exc)
-        return app.response_class("NOK", mimetype="text/plain"), 500
+        logger.error("Failed to write %s: %s", AUTHORIZED_KEYS_FILE, exc)
+        return PlainTextResponse("NOK", status_code=500)
 
-    return app.response_class("OK", mimetype="text/plain")
+    return PlainTextResponse("OK")
 
 
 if __name__ == "__main__":
@@ -139,7 +136,6 @@ if __name__ == "__main__":
     set_proper_permissions()
     port = int(os.environ.get("PAIRING_APP_PORT", 5000))
     # Pairing app is exposed on all interfaces.
-    from waitress import serve
-    serve(app, host="0.0.0.0", port=port, threads=1)
+    import uvicorn
 
-
+    uvicorn.run(app, host="0.0.0.0", port=port)
