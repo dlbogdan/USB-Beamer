@@ -1,3 +1,5 @@
+#!/bin/sh
+
 for d in /sys/bus/usb/devices/*; do
   b=$(basename "$d")
   [[ "$b" == *:* ]] && continue
