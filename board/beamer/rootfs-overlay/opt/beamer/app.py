@@ -1,28 +1,28 @@
+import json
+import logging
 import os
 import subprocess
-import logging
 from logging.handlers import SysLogHandler
-from typing import List, Dict, Any, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
-from flask import Flask, jsonify, request
+import anyio
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from pairing_utils import is_in_pairing_mode
 from usb_reset import reset
 
 
-app = Flask(__name__)
-
-
-def _setup_syslog_logging(application: Flask, tag: str) -> None:
+def _setup_syslog_logging(tag: str) -> logging.Logger:
     """
-    Configure logging so that messages are sent to the system syslog daemon,
-    which typically writes to /var/log/messages on the Beamer device.
+    Configure logging so messages are sent to syslog (/dev/log) when available.
+    Returns a logger tagged for this app.
     """
     root_logger = logging.getLogger()
-
     syslog_handler: SysLogHandler | None = None
 
-    # Avoid adding multiple syslog handlers if this function is called twice.
     for handler in root_logger.handlers:
         if isinstance(handler, SysLogHandler):
             syslog_handler = handler
@@ -32,8 +32,7 @@ def _setup_syslog_logging(application: Flask, tag: str) -> None:
         try:
             syslog_handler = SysLogHandler(address="/dev/log")
         except OSError:
-            # If /dev/log is not available, fall back to default stderr logging.
-            application.logger.warning(
+            logging.getLogger(tag).warning(
                 "Syslog socket /dev/log not available; using default logging only"
             )
         else:
@@ -43,20 +42,14 @@ def _setup_syslog_logging(application: Flask, tag: str) -> None:
             root_logger.addHandler(syslog_handler)
             root_logger.setLevel(logging.INFO)
 
-    # Attach the syslog handler to the Flask app logger as well so app.logger.info
-    # messages (like setkey updates) make it to syslog even when propagate=False.
-    # When propagating to root, we don't need the app to hold its own syslog
-    # handler (would cause duplicates). Drop any existing SysLogHandler on it.
-    if syslog_handler:
-        application.logger.handlers = [
-            h for h in application.logger.handlers if not isinstance(h, SysLogHandler)
-        ]
-
-    application.logger.setLevel(logging.INFO)
-    application.logger.propagate = True
+    logger = logging.getLogger(tag)
+    logger.setLevel(logging.INFO)
+    logger.propagate = True
+    return logger
 
 
-_setup_syslog_logging(app, "zeroforce-usb")
+logger = _setup_syslog_logging("zeroforce-usb")
+app = Starlette(debug=False)
 
 
 SCRIPT_DIR = os.path.dirname(__file__)
@@ -92,7 +85,7 @@ def list_plugged_devices() -> List[Dict[str, Any]]:
     """
     stdout, stderr, code = _run_script(LIST_PLUGGED_SCRIPT)
     if code != 0:
-        app.logger.error("list-plugged failed (%s): %s", code, stderr.strip())
+        logger.error("list-plugged failed (%s): %s", code, stderr.strip())
         return []
 
     devices: List[Dict[str, Any]] = []
@@ -131,7 +124,7 @@ def get_usb_info(busid: str) -> Dict[str, str]:
     """
     stdout, stderr, code = _run_script(GET_USB_INFO_SCRIPT, [busid])
     if code != 0:
-        app.logger.warning("get-usb-info failed for %s: %s", busid, stderr.strip())
+        logger.warning("get-usb-info failed for %s: %s", busid, stderr.strip())
         return {"vendor": "Unknown Vendor", "product": "Unknown Device"}
 
     try:
@@ -146,46 +139,90 @@ def get_usb_info(busid: str) -> Dict[str, str]:
         )
         return {"vendor": vendor, "product": product}
     except Exception as exc:
-        app.logger.warning("Failed to parse get-usb-info output for %s: %s", busid, exc)
+        logger.warning("Failed to parse get-usb-info output for %s: %s", busid, exc)
         return {"vendor": "Unknown Vendor", "product": "Unknown Device"}
 
 
- 
-# --- HTTP API -------------------------------------------------------------------
+# --- WebSocket support ---------------------------------------------------------
+
+ws_clients: Set[WebSocket] = set()
+
+
+async def broadcast(payload: Dict[str, Any]) -> None:
+    """
+    Send a JSON payload to all connected WebSocket clients.
+    """
+    message = json.dumps(payload)
+    dead: List[WebSocket] = []
+    for ws in list(ws_clients):
+        try:
+            await ws.send_text(message)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        ws_clients.discard(ws)
+
+
+# --- HTTP & WebSocket API -----------------------------------------------------
 
 @app.route("/zeroforce/list-devices", methods=["GET"])
-def zeroforce_list_devices():
+async def zeroforce_list_devices(request: Request) -> JSONResponse:
     """
-    List USB devices using the helper scripts (no usbip calls).
-    Intended to be called only by the connected client while pairing mode
-    is inactive (enforced here).
+    List USB devices using helper scripts (no usbip calls). Not available in pairing mode.
     """
     if is_in_pairing_mode():
-        return jsonify({"ok": False, "error": "Not available in pairing mode"}), 403
+        return JSONResponse({"ok": False, "error": "Not available in pairing mode"}, status_code=403)
 
-    devices = list_plugged_devices()
-    return jsonify(devices)
+    devices = await anyio.to_thread.run_sync(list_plugged_devices)
+    return JSONResponse(devices)
+
 
 @app.route("/zeroforce/reset-device", methods=["POST"])
-def zeroforce_reset_device():
+async def zeroforce_reset_device(request: Request) -> JSONResponse:
     """
-    Reset a USB device.
+    Reset a USB device and notify WebSocket clients.
     """
-    data = request.json
-    busid = data.get("busid")
+    data = await request.json()
+    busid = data.get("busid") if isinstance(data, dict) else None
     if not busid:
-        return jsonify({"ok": False, "error": "Missing busid"}), 400
+        return JSONResponse({"ok": False, "error": "Missing busid"}, status_code=400)
+
     try:
-        reset(busid)
-        return jsonify({"ok": True})
+        await anyio.to_thread.run_sync(reset, busid)
+        await broadcast({"type": "reset", "busid": busid, "ok": True})
+        return JSONResponse({"ok": True})
     except Exception as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        logger.exception("reset failed for %s", busid)
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
+@app.websocket_route("/zeroforce/ws")
+async def zeroforce_ws(websocket: WebSocket) -> None:
+    await websocket.accept()
+    if is_in_pairing_mode():
+        await websocket.send_text(json.dumps({"type": "error", "error": "Not available in pairing mode"}))
+        await websocket.close()
+        return
+
+    ws_clients.add(websocket)
+    try:
+        devices = await anyio.to_thread.run_sync(list_plugged_devices)
+        await websocket.send_text(json.dumps({"type": "devices", "devices": devices}))
+        while True:
+            msg = await websocket.receive_text()
+            if msg == "list":
+                devices = await anyio.to_thread.run_sync(list_plugged_devices)
+                await websocket.send_text(json.dumps({"type": "devices", "devices": devices}))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        ws_clients.discard(websocket)
+
 
 if __name__ == "__main__":
     # USB API should only listen on localhost; it is expected to be reached
     # via the SSH tunnel (local port forwarding).
     port = int(os.environ.get("USB_APP_PORT", 6000))
-    from waitress import serve
-    serve(app, host="127.0.0.1", port=port, threads=1)
+    import uvicorn
 
-
+    uvicorn.run(app, host="127.0.0.1", port=port)

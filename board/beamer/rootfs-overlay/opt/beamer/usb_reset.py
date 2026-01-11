@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-import fcntl, os, sys
+import fcntl
+import os
+import sys
+
 
 USBDEVFS_RESET = ord("U") << 8 | 20  # _IO('U', 20)
 
+
 def resolve_devpath(arg: str) -> str:
-    """Return /dev/bus/usb/BBB/DDD from either a device path or a sysfs-style USB id."""
+    """Return /dev/bus/usb/BBB/DDD from a device path or sysfs-style USB id."""
     if arg.startswith("/dev/bus/usb/"):
         return arg
 
@@ -31,6 +35,7 @@ def reset(devpath: str):
         print(f"Reset OK: {devpath}")
     finally:
         os.close(fd)
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
