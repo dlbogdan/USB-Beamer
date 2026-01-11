@@ -4,6 +4,8 @@ import logging
 from logging.handlers import SysLogHandler
 from flask import Flask, request
 
+from pairing_utils import AUTHORIZED_KEYS_FILE, TUNNEL_USER, is_in_pairing_mode
+
 
 app = Flask(__name__)
 
@@ -40,12 +42,15 @@ def _setup_syslog_logging(application: Flask, tag: str) -> None:
 
     # Attach the syslog handler to the Flask app logger as well so app.logger.info
     # messages reach syslog even when propagate=False.
-    if syslog_handler and not any(
-        isinstance(h, SysLogHandler) for h in application.logger.handlers
-    ):
-        application.logger.addHandler(syslog_handler)
+    # When propagating to root, we don't need the app to hold its own syslog
+    # handler (would cause duplicates). Drop any existing SysLogHandler on it.
+    if syslog_handler:
+        application.logger.handlers = [
+            h for h in application.logger.handlers if not isinstance(h, SysLogHandler)
+        ]
 
     application.logger.setLevel(logging.INFO)
+    application.logger.propagate = True
 
 
 _setup_syslog_logging(app, "zeroforce-pairing")
@@ -56,17 +61,7 @@ _setup_syslog_logging(app, "zeroforce-pairing")
 
 # --- SSH / pairing configuration ------------------------------------------------
 
-AUTHORIZED_KEYS_FILE = "/root/.ssh/authorized_keys"
 SSH_DIR = os.path.dirname(AUTHORIZED_KEYS_FILE)
-TUNNEL_USER = "root"
-
-# Files maintained by the zeroforce tunnel monitor service.
-PAIRING_RUN_DIR = "/run/zeroforce"
-TUNNEL_ACTIVE_FLAG = os.path.join(PAIRING_RUN_DIR, "tunnel_active")
-SINCE_CONNECTED_FILE = os.path.join(PAIRING_RUN_DIR, "since-connected")
-
-# 5 minutes by default, as per api.md (can be overridden via env var).
-PAIRING_TIMEOUT_SECONDS = int(os.environ.get("ZEROFORCE_PAIRING_TIMEOUT", "300"))
 
 
 def set_proper_permissions() -> None:
@@ -92,86 +87,6 @@ def set_proper_permissions() -> None:
         os.chmod(AUTHORIZED_KEYS_FILE, 0o600)
     except Exception as exc:
         app.logger.error("Failed to set SSH permissions: %s", exc)
-
-
-def has_configured_key() -> bool:
-    """
-    Returns True if AUTHORIZED_KEYS_FILE exists and contains at least one
-    non-empty line starting with an SSH key type (ssh-rsa / ssh-ed25519).
-
-    This is used as a proxy for "has ever successfully paired/connected".
-    """
-    try:
-        with open(AUTHORIZED_KEYS_FILE, "r") as f:
-            for line in f:
-                s = line.strip()
-                if s and (s.startswith("ssh-rsa") or s.startswith("ssh-ed25519")):
-                    return True
-    except FileNotFoundError:
-        return False
-    except Exception as exc:
-        app.logger.error("Error reading %s: %s", AUTHORIZED_KEYS_FILE, exc)
-        return False
-    return False
-
-
-def get_since_connected_seconds() -> int | None:
-    """
-    Read the number of seconds since the tunnel last went offline, as
-    maintained by the zeroforce tunnel monitor service.
-    Returns None if the value cannot be determined.
-    """
-    try:
-        with open(SINCE_CONNECTED_FILE, "r") as f:
-            raw = f.read().strip()
-        if not raw:
-            return None
-        return int(raw)
-    except FileNotFoundError:
-        return None
-    except ValueError:
-        app.logger.warning("Invalid integer in %s: %r", SINCE_CONNECTED_FILE, raw)
-        return None
-    except Exception as exc:
-        app.logger.error("Error reading %s: %s", SINCE_CONNECTED_FILE, exc)
-        return None
-
-
-def has_active_tunnel_connections() -> bool:
-    """
-    True if the monitor indicates that there is at least one active tunnel
-    connection via the flag file.
-    """
-    return os.path.exists(TUNNEL_ACTIVE_FLAG)
-
-
-def is_in_pairing_mode() -> bool:
-    """
-    Decide whether pairing mode is currently active, according to api.md:
-
-      1. Pairing mode is active if there were never any successful
-         connections to the tunnel SSH server.
-         -> approximated by "no authorized key configured yet".
-      2. Pairing mode is also active if it has been more than 5 minutes
-         since the last successful connection to the tunnel SSH server.
-         -> derived from since-connected file and tunnel-active flag.
-    """
-    # If there is an active tunnel connection, pairing is OFF.
-    if has_active_tunnel_connections():
-        return False
-
-    # No active tunnel connection.
-    if not has_configured_key():
-        # Approximate "never any successful connections": no key configured.
-        return True
-
-    since = get_since_connected_seconds()
-    if since is None:
-        # Conservatively treat as "not in pairing mode" if we can't read a
-        # sensible value.
-        return False
-
-    return since >= PAIRING_TIMEOUT_SECONDS
 
 
 @app.route("/zeroforce/readytopair", methods=["GET"])
