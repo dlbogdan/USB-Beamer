@@ -6,6 +6,7 @@ import os
 AUTHORIZED_KEYS_FILE = "/root/.ssh/authorized_keys"
 TUNNEL_USER = "root"
 PAIRING_RUN_DIR = "/run/zeroforce"
+DEV_MODE_FLAG = "/boot/devmode"
 TUNNEL_ACTIVE_FLAG = os.path.join(PAIRING_RUN_DIR, "tunnel_active")
 SINCE_CONNECTED_FILE = os.path.join(PAIRING_RUN_DIR, "since-connected")
 PAIRING_TIMEOUT_SECONDS = int(os.environ.get("ZEROFORCE_PAIRING_TIMEOUT", "300"))
@@ -66,8 +67,12 @@ def is_in_pairing_mode() -> bool:
     """
     Decide whether pairing mode is currently active, according to api.md.
     """
+    
     if has_active_tunnel_connections():
         return False
+ 
+    if not has_active_tunnel_connections() and os.path.exists(DEV_MODE_FLAG):
+        return True
 
     if not has_configured_key():
         return True

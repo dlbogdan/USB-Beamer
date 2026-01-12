@@ -1,11 +1,14 @@
+import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 from logging.handlers import SysLogHandler
 from typing import Any, Dict, List, Set, Tuple
 
 import anyio
+# import time
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -55,6 +58,22 @@ app = Starlette(debug=False)
 SCRIPT_DIR = os.path.dirname(__file__)
 LIST_PLUGGED_SCRIPT = os.path.join(SCRIPT_DIR, "list-plugged.sh")
 GET_USB_INFO_SCRIPT = os.path.join(SCRIPT_DIR, "get-usb-info.sh")
+DEV_MODE_FLAG = "/boot/devmode"
+LOG_PATH = "/var/log/messages"
+LOG_QUEUE_MAX = 20 # todo: make this configurable
+
+
+def _ok(payload: Dict[str, Any], status_code: int = 200) -> JSONResponse:
+    """Shortcut for successful JSON responses."""
+    return JSONResponse(payload, status_code=status_code)
+
+
+def _error(reason: str, status_code: int, extra: Dict[str, Any] | None = None) -> JSONResponse:
+    """Consistent error JSON responses."""
+    body: Dict[str, Any] = {"status": "error", "reason": reason}
+    if extra:
+        body.update(extra)
+    return JSONResponse(body, status_code=status_code)
 
 
 # --- USB helpers (no direct usbip calls from API) --------------------------------
@@ -146,6 +165,7 @@ def get_usb_info(busid: str) -> Dict[str, str]:
 # --- WebSocket support ---------------------------------------------------------
 
 ws_clients: Set[WebSocket] = set()
+log_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue(maxsize=LOG_QUEUE_MAX)
 
 
 async def broadcast(payload: Dict[str, Any]) -> None:
@@ -163,7 +183,147 @@ async def broadcast(payload: Dict[str, Any]) -> None:
         ws_clients.discard(ws)
 
 
+async def watch_devices(interval: float = 2.0) -> None:
+    """
+    Poll the device list and broadcast when it changes.
+    """
+    last_snapshot: list[tuple[str, str, str, str, str]] | None = None
+    while True:
+        try:
+            devices = await anyio.to_thread.run_sync(list_plugged_devices)
+            snapshot = [
+                (
+                    d.get("busid", ""),
+                    d.get("vid", ""),
+                    d.get("pid", ""),
+                    d.get("vendor", ""),
+                    d.get("product", ""),
+                )
+                for d in devices
+            ]
+            if snapshot != last_snapshot:
+                await broadcast({"type": "devices", "devices": devices})
+                logger.info("broadcasted device change to %d clients", len(ws_clients))
+                last_snapshot = snapshot
+        except Exception:
+            logger.exception("device watcher failed")
+        await asyncio.sleep(interval)
+
+
+def _extract_level(line: str) -> str:
+    """
+    Best-effort log level extraction from a syslog-like line.
+    """
+    m = re.search(r"\b(emerg|alert|crit|err|error|warn|warning|notice|info|debug)\b", line, re.IGNORECASE)
+    return m.group(1).lower() if m else "info"
+
+
+def _should_emit_log(level: str) -> bool:
+    """
+    Decide whether to emit a log line based on dev mode and level.
+    """
+    if os.path.exists(DEV_MODE_FLAG):
+        return True
+    return level in {"err", "error", "warn", "warning", "crit", "alert", "emerg"}
+
+
+async def _enqueue_log(payload: Dict[str, Any]) -> None:
+    """
+    Enqueue a log payload with bounded buffering (drops oldest on overflow).
+    """
+    try:
+        log_queue.put_nowait(payload)
+    except asyncio.QueueFull:
+        try:
+            log_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+        try:
+            log_queue.put_nowait(payload)
+        except asyncio.QueueFull:
+            pass
+
+
+async def log_sender() -> None:
+    """
+    Drain log queue and broadcast to connected clients.
+    """
+    while True:
+        payload = await log_queue.get()
+        await broadcast(payload)
+
+
+async def log_watcher() -> None:
+    """
+    Tail system logs and push over WebSocket. Sends all logs in devmode,
+    otherwise only warnings/errors and above.
+    """
+    if not os.path.exists(LOG_PATH):
+        logger.warning("log watcher skipped; %s missing", LOG_PATH)
+        return
+
+    cmd = ["tail", "-n", "0", "-F", LOG_PATH]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+    except FileNotFoundError:
+        logger.warning("tail not found; log watcher disabled")
+        return
+    except Exception as exc:
+        logger.exception("failed to start log watcher: %s", exc)
+        return
+
+    logger.info("log watcher started")
+    try:
+        while True:
+            line = await proc.stdout.readline()
+            if not line:
+                if proc.returncode is not None:
+                    logger.warning("log watcher exited with code %s", proc.returncode)
+                    break
+                await asyncio.sleep(0.2)
+                continue
+            text = line.decode(errors="replace").rstrip("\r\n")
+            level = _extract_level(text)
+            if not _should_emit_log(level):
+                continue
+            await _enqueue_log({"type": "log", "level": level, "line": text})
+    except Exception:
+        logger.exception("log watcher failed")
+    finally:
+        if proc.returncode is None:
+            proc.terminate()
+
+
+def reboot() -> None:
+    """
+    Reboot the beamer.
+    """
+    subprocess.run(["reboot"], check=False)
+    broadcast({"type": "warning", "message": "rebooting beamer"})
+    logger.info("rebooted beamer")
+
 # --- HTTP & WebSocket API -----------------------------------------------------
+@app.route("/zeroforce/uptime", methods=["GET"])
+async def zeroforce_uptime(request: Request) -> JSONResponse:
+    """
+    Get the uptime of the beamer.
+    """
+    uptime = os.path.getmtime("/proc/uptime")
+    return _ok({"uptime": uptime})
+
+@app.route("/zeroforce/reboot-beamer", methods=["GET"])
+async def zeroforce_reboot_beamer(request: Request) -> JSONResponse:
+    """
+    Reboot the beamer.
+    """
+    try:
+        await anyio.to_thread.run_sync(reboot)
+        return _ok({"status": "ok"})
+    except Exception as exc:
+        logger.exception("reboot failed")
+        return _error("reboot_failed", status_code=500, extra={"detail": str(exc)})
 
 @app.route("/zeroforce/list-devices", methods=["GET"])
 async def zeroforce_list_devices(request: Request) -> JSONResponse:
@@ -171,10 +331,10 @@ async def zeroforce_list_devices(request: Request) -> JSONResponse:
     List USB devices using helper scripts (no usbip calls). Not available in pairing mode.
     """
     if is_in_pairing_mode():
-        return JSONResponse({"ok": False, "error": "Not available in pairing mode"}, status_code=403)
+        return _error("pairing_mode_enabled", status_code=403)
 
     devices = await anyio.to_thread.run_sync(list_plugged_devices)
-    return JSONResponse(devices)
+    return _ok({"devices": devices})
 
 
 @app.route("/zeroforce/reset-device", methods=["POST"])
@@ -182,18 +342,21 @@ async def zeroforce_reset_device(request: Request) -> JSONResponse:
     """
     Reset a USB device and notify WebSocket clients.
     """
-    data = await request.json()
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        data = {}
     busid = data.get("busid") if isinstance(data, dict) else None
     if not busid:
-        return JSONResponse({"ok": False, "error": "Missing busid"}, status_code=400)
+        return _error("missing_busid", status_code=400)
 
     try:
         await anyio.to_thread.run_sync(reset, busid)
         await broadcast({"type": "reset", "busid": busid, "ok": True})
-        return JSONResponse({"ok": True})
+        return _ok({"status": "ok"})
     except Exception as exc:
         logger.exception("reset failed for %s", busid)
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+        return _error("reset_failed", status_code=500, extra={"detail": str(exc)})
 
 
 @app.websocket_route("/zeroforce/ws")
@@ -209,14 +372,18 @@ async def zeroforce_ws(websocket: WebSocket) -> None:
         devices = await anyio.to_thread.run_sync(list_plugged_devices)
         await websocket.send_text(json.dumps({"type": "devices", "devices": devices}))
         while True:
-            msg = await websocket.receive_text()
-            if msg == "list":
-                devices = await anyio.to_thread.run_sync(list_plugged_devices)
-                await websocket.send_text(json.dumps({"type": "devices", "devices": devices}))
+            await websocket.receive_text()
     except WebSocketDisconnect:
         pass
     finally:
         ws_clients.discard(websocket)
+
+
+@app.on_event("startup")
+async def _start_watch() -> None:
+    asyncio.create_task(watch_devices())
+    asyncio.create_task(log_watcher())
+    asyncio.create_task(log_sender())
 
 
 if __name__ == "__main__":

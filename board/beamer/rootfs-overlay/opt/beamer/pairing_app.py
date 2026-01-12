@@ -2,12 +2,13 @@ import json
 import logging
 import os
 import pwd
+import time
 from logging.handlers import SysLogHandler
 
 import anyio
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse
+from starlette.responses import JSONResponse
 
 from pairing_utils import AUTHORIZED_KEYS_FILE, TUNNEL_USER, is_in_pairing_mode
 
@@ -51,6 +52,17 @@ app = Starlette(debug=False)
 # --- SSH / pairing configuration ------------------------------------------------
 
 SSH_DIR = os.path.dirname(AUTHORIZED_KEYS_FILE)
+DEV_MODE_FLAG = "/boot/devmode"
+
+
+def _ok(payload: dict, status_code: int = 200) -> JSONResponse:
+    """Shortcut for successful JSON responses."""
+    return JSONResponse(payload, status_code=status_code)
+
+
+def _error(reason: str, status_code: int) -> JSONResponse:
+    """Consistent error JSON responses."""
+    return JSONResponse({"status": "error", "reason": reason}, status_code=status_code)
 
 
 def set_proper_permissions() -> None:
@@ -84,20 +96,33 @@ def _write_key(key: str) -> None:
     set_proper_permissions()
     logger.info("Updated authorized_keys via /zeroforce/setkey")
 
+@app.route("/zeroforce/info", methods=["GET"])
+async def zeroforce_info(request: Request) -> JSONResponse:
+    """
+    Get information about the beamer.
+    """
+    # for not just send if it's in devmode or not, pairing mode and uptime
+    info = {
+        "version": "0.1.0", # TODO: get version from package.json
+        "hostname": os.uname().nodename,
+        "devmode": os.path.exists(DEV_MODE_FLAG),
+        "pairing_mode": is_in_pairing_mode(),
+        "uptime": time.time() - os.path.getmtime("/proc/uptime"),
+    }
+    return _ok(info)
 
 @app.route("/zeroforce/readytopair", methods=["GET"])
-async def zeroforce_ready_to_pair(request: Request) -> PlainTextResponse:
+async def zeroforce_ready_to_pair(request: Request) -> JSONResponse:
     """
     Returns "true" or "false" (lower-case) depending on whether pairing mode
     is currently active.
     """
     ready = is_in_pairing_mode()
-    body = "true" if ready else "false"
-    return PlainTextResponse(body)
+    return _ok({"ready": ready})
 
 
 @app.route("/zeroforce/setkey", methods=["POST"])
-async def zeroforce_set_key(request: Request) -> PlainTextResponse:
+async def zeroforce_set_key(request: Request) -> JSONResponse:
     """
     Replace the SSH public key allowed to connect to the tunnel.
 
@@ -106,7 +131,7 @@ async def zeroforce_set_key(request: Request) -> PlainTextResponse:
     - Replaces the content of AUTHORIZED_KEYS_FILE with this single key.
     """
     if not is_in_pairing_mode():
-        return PlainTextResponse("NOK", status_code=403)
+        return _error("pairing_mode_disabled", status_code=403)
 
     key = ""
     form = await request.form()
@@ -120,15 +145,15 @@ async def zeroforce_set_key(request: Request) -> PlainTextResponse:
         key = str(payload.get("key", "")).strip() if isinstance(payload, dict) else ""
 
     if not key or not (key.startswith("ssh-rsa") or key.startswith("ssh-ed25519")):
-        return PlainTextResponse("NOK", status_code=400)
+        return _error("invalid_key", status_code=400)
 
     try:
         await anyio.to_thread.run_sync(_write_key, key)
     except Exception as exc:
         logger.error("Failed to write %s: %s", AUTHORIZED_KEYS_FILE, exc)
-        return PlainTextResponse("NOK", status_code=500)
+        return _error("write_failed", status_code=500)
 
-    return PlainTextResponse("OK")
+    return _ok({"status": "ok"})
 
 
 if __name__ == "__main__":
