@@ -51,7 +51,7 @@ def _setup_syslog_logging(tag: str) -> logging.Logger:
     return logger
 
 
-logger = _setup_syslog_logging("zeroforce-usb")
+logger = _setup_syslog_logging("beamer-api")
 app = Starlette(debug=False)
 
 
@@ -305,16 +305,16 @@ def reboot() -> None:
     logger.info("rebooted beamer")
 
 # --- HTTP & WebSocket API -----------------------------------------------------
-@app.route("/zeroforce/uptime", methods=["GET"])
-async def zeroforce_uptime(request: Request) -> JSONResponse:
+@app.route("/api/uptime", methods=["GET"])
+async def api_uptime(request: Request) -> JSONResponse:
     """
     Get the uptime of the beamer.
     """
     uptime = os.path.getmtime("/proc/uptime")
     return _ok({"uptime": uptime})
 
-@app.route("/zeroforce/reboot-beamer", methods=["GET"])
-async def zeroforce_reboot_beamer(request: Request) -> JSONResponse:
+@app.route("/api/reboot-beamer", methods=["GET"])
+async def api_reboot_beamer(request: Request) -> JSONResponse:
     """
     Reboot the beamer.
     """
@@ -325,8 +325,8 @@ async def zeroforce_reboot_beamer(request: Request) -> JSONResponse:
         logger.exception("reboot failed")
         return _error("reboot_failed", status_code=500, extra={"detail": str(exc)})
 
-@app.route("/zeroforce/list-devices", methods=["GET"])
-async def zeroforce_list_devices(request: Request) -> JSONResponse:
+@app.route("/api/list-devices", methods=["GET"])
+async def api_list_devices(request: Request) -> JSONResponse:
     """
     List USB devices using helper scripts (no usbip calls). Not available in pairing mode.
     """
@@ -337,8 +337,8 @@ async def zeroforce_list_devices(request: Request) -> JSONResponse:
     return _ok({"devices": devices})
 
 
-@app.route("/zeroforce/reset-device", methods=["POST"])
-async def zeroforce_reset_device(request: Request) -> JSONResponse:
+@app.route("/api/reset-device", methods=["POST"])
+async def api_reset_device(request: Request) -> JSONResponse:
     """
     Reset a USB device and notify WebSocket clients.
     """
@@ -359,8 +359,8 @@ async def zeroforce_reset_device(request: Request) -> JSONResponse:
         return _error("reset_failed", status_code=500, extra={"detail": str(exc)})
 
 
-@app.websocket_route("/zeroforce/ws")
-async def zeroforce_ws(websocket: WebSocket) -> None:
+@app.websocket_route("/api/ws")
+async def api_ws(websocket: WebSocket) -> None:
     await websocket.accept()
     if is_in_pairing_mode():
         await websocket.send_text(json.dumps({"type": "error", "error": "Not available in pairing mode"}))

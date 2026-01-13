@@ -134,15 +134,30 @@ async def zeroforce_set_key(request: Request) -> JSONResponse:
         return _error("pairing_mode_disabled", status_code=403)
 
     key = ""
-    form = await request.form()
-    if form:
-        key = str(form.get("key", "")).strip()
+
+    # Prefer JSON if content-type says so; otherwise try form, then fall back to JSON.
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "application/json" in content_type:
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if isinstance(payload, dict):
+            key = str(payload.get("key", "")).strip()
+    if not key:
+        try:
+            form = await request.form()
+            key = str(form.get("key", "")).strip()
+        except Exception:
+            # Ignore parsing errors and fall back to JSON
+            pass
     if not key:
         try:
             payload = await request.json()
-        except json.JSONDecodeError:
+        except Exception:
             payload = {}
-        key = str(payload.get("key", "")).strip() if isinstance(payload, dict) else ""
+        if isinstance(payload, dict):
+            key = str(payload.get("key", "")).strip()
 
     if not key or not (key.startswith("ssh-rsa") or key.startswith("ssh-ed25519")):
         return _error("invalid_key", status_code=400)
@@ -154,6 +169,12 @@ async def zeroforce_set_key(request: Request) -> JSONResponse:
         return _error("write_failed", status_code=500)
 
     return _ok({"status": "ok"})
+
+
+@app.on_event("startup")
+async def _ensure_permissions_on_start() -> None:
+    # Ensure SSH permissions are correct when running under a process manager
+    await anyio.to_thread.run_sync(set_proper_permissions)
 
 
 if __name__ == "__main__":
